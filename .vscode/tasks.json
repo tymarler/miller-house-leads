@@ -1,0 +1,11 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "kill-processes",
+            "type": "shell",
+            "command": "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force",
+            "problemMatcher": []
+        }
+    ]
+} 
