@@ -1,0 +1,15 @@
+This directory contains house plan images.
+
+For a real implementation, you would have actual images here:
+- farmhouse-thumb.jpg 
+- farmhouse-2d.jpg
+- farmhouse-3d.jpg
+- craftsman-thumb.jpg
+- craftsman-2d.jpg
+- craftsman-3d.jpg
+- ranch-thumb.jpg
+- ranch-2d.jpg
+- ranch-3d.jpg
+- villa-thumb.jpg
+- villa-2d.jpg
+- villa-3d.jpg 

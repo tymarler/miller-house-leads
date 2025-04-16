@@ -8,10 +8,11 @@ import { BrowserRouter as Router } from 'react-router-dom';
 import About from './pages/About';
 import PhotoGallery from './pages/PhotoGallery';
 import VideoGallery from './pages/VideoGallery';
-import { PhotoIcon, VideoCameraIcon, UserGroupIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import { PhotoIcon, VideoCameraIcon, UserGroupIcon, DocumentTextIcon, HomeModernIcon } from '@heroicons/react/24/outline';
 import Admin from './pages/Admin';
 import TestAPI from './pages/TestAPI';
 import DebugAPI from './pages/DebugAPI';
+import HousePlans from './pages/HousePlans';
 import API_BASE_URL from './config';
 
 // Cost per square foot ranges by state
@@ -803,6 +804,9 @@ function App() {
                         <Link to="/video-gallery" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
                           Video Gallery
                         </Link>
+                        <Link to="/house-plans" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
+                          House Plans
+                        </Link>
                         <Link to="/about" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
                           About
                         </Link>
@@ -1035,6 +1039,7 @@ function App() {
                 <Route path="/about" element={<About />} />
                 <Route path="/test-api" element={<TestAPI />} />
                 <Route path="/debug-api" element={<DebugAPI />} />
+                <Route path="/house-plans" element={<HousePlans />} />
               </Routes>
 
               {showSuccessMessage && (
