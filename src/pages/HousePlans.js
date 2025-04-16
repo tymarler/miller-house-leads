@@ -2,74 +2,108 @@ import React, { useState, useEffect } from 'react';
 import { ShoppingCartIcon } from '@heroicons/react/24/outline';
 import './HousePlans.css';
 
-// Sample house plan data - in a real app, this would come from an API
+// House plan data based on Designtexasstudios.com
 const sampleHousePlans = [
   {
     id: 1,
-    name: 'Modern Farmhouse',
-    description: 'A beautiful modern farmhouse design with open concept living spaces',
-    squareFootage: 2800,
+    name: 'The Blanco River',
+    description: 'A luxurious modern farmhouse design with open concept living spaces and an emphasis on indoor-outdoor connectivity. Perfect for entertaining and family living.',
+    squareFootage: 3250,
     bedrooms: 4,
     bathrooms: 3.5,
     garages: 2,
     floors: 2,
-    price: 499,
-    features: ['Open Floor Plan', 'Master Suite', 'Bonus Room', 'Walk-in Closets'],
+    price: 599,
+    features: ['Open Floor Plan', 'Master Suite', 'Outdoor Kitchen', 'Game Room', 'Covered Patio', 'Walk-in Closets'],
     images: {
-      thumbnail: 'https://via.placeholder.com/300x200?text=Modern+Farmhouse',
-      floorplan2d: 'https://via.placeholder.com/800x600?text=Modern+Farmhouse+Floor+Plan',
-      render3d: 'https://via.placeholder.com/800x600?text=Modern+Farmhouse+3D+View'
+      thumbnail: 'https://via.placeholder.com/300x200?text=Blanco+River',
+      floorplan2d: 'https://via.placeholder.com/800x600?text=Blanco+River+Floor+Plan',
+      render3d: 'https://via.placeholder.com/800x600?text=Blanco+River+3D+View'
     }
   },
   {
     id: 2,
-    name: 'Craftsman Cottage',
-    description: 'Charming craftsman style with detailed woodwork and cozy spaces',
-    squareFootage: 1900,
-    bedrooms: 3,
-    bathrooms: 2,
-    garages: 1,
+    name: 'The San Marcos',
+    description: 'A stunning single-story modern farmhouse with exceptional curb appeal. Features high ceilings throughout and a magnificent open concept layout with large kitchen island.',
+    squareFootage: 2800,
+    bedrooms: 4,
+    bathrooms: 3,
+    garages: 3,
     floors: 1,
-    price: 349,
-    features: ['Front Porch', 'Fireplace', 'Home Office', 'Dining Room'],
+    price: 549,
+    features: ['Single Story', 'High Ceilings', 'Large Kitchen Island', 'Media Room', 'Covered Porch', 'Utility Room'],
     images: {
-      thumbnail: 'https://via.placeholder.com/300x200?text=Craftsman+Cottage',
-      floorplan2d: 'https://via.placeholder.com/800x600?text=Craftsman+Cottage+Floor+Plan',
-      render3d: 'https://via.placeholder.com/800x600?text=Craftsman+Cottage+3D+View'
+      thumbnail: 'https://via.placeholder.com/300x200?text=San+Marcos',
+      floorplan2d: 'https://via.placeholder.com/800x600?text=San+Marcos+Floor+Plan',
+      render3d: 'https://via.placeholder.com/800x600?text=San+Marcos+3D+View'
     }
   },
   {
     id: 3,
-    name: 'Contemporary Ranch',
-    description: 'Single-level living with modern design elements and spacious rooms',
-    squareFootage: 2200,
+    name: 'The Guadalupe',
+    description: 'A Texas Hill Country inspired design with stone and wood exterior elements. Features an open layout with a stunning kitchen, spacious bedrooms, and generous outdoor living areas.',
+    squareFootage: 3100,
     bedrooms: 3,
     bathrooms: 2.5,
     garages: 2,
     floors: 1,
-    price: 399,
-    features: ['Single Level', 'Great Room', 'Covered Patio', 'Large Kitchen'],
+    price: 489,
+    features: ['Hill Country Design', 'Split Bedroom Layout', 'Gourmet Kitchen', 'Vaulted Ceilings', 'Outdoor Living', 'Study'],
     images: {
-      thumbnail: 'https://via.placeholder.com/300x200?text=Contemporary+Ranch',
-      floorplan2d: 'https://via.placeholder.com/800x600?text=Contemporary+Ranch+Floor+Plan',
-      render3d: 'https://via.placeholder.com/800x600?text=Contemporary+Ranch+3D+View'
+      thumbnail: 'https://via.placeholder.com/300x200?text=Guadalupe',
+      floorplan2d: 'https://via.placeholder.com/800x600?text=Guadalupe+Floor+Plan',
+      render3d: 'https://via.placeholder.com/800x600?text=Guadalupe+3D+View'
     }
   },
   {
     id: 4,
-    name: 'European Villa',
-    description: 'Elegant European-inspired design with luxury features',
-    squareFootage: 3500,
-    bedrooms: 5,
-    bathrooms: 4,
+    name: 'The Colorado',
+    description: 'A rustic modern design with an impressive two-story great room and luxurious master suite. Includes a gourmet kitchen with walk-in pantry and separate dining area.',
+    squareFootage: 3600,
+    bedrooms: 4,
+    bathrooms: 3.5,
     garages: 3,
     floors: 2,
-    price: 699,
-    features: ['Grand Entrance', 'Home Theater', 'Wine Cellar', 'Outdoor Kitchen'],
+    price: 649,
+    features: ['Two-Story Great Room', 'Gourmet Kitchen', 'Luxury Master Suite', 'Home Office', 'Game Room', 'Mud Room'],
     images: {
-      thumbnail: 'https://via.placeholder.com/300x200?text=European+Villa',
-      floorplan2d: 'https://via.placeholder.com/800x600?text=European+Villa+Floor+Plan',
-      render3d: 'https://via.placeholder.com/800x600?text=European+Villa+3D+View'
+      thumbnail: 'https://via.placeholder.com/300x200?text=Colorado',
+      floorplan2d: 'https://via.placeholder.com/800x600?text=Colorado+Floor+Plan',
+      render3d: 'https://via.placeholder.com/800x600?text=Colorado+3D+View'
+    }
+  },
+  {
+    id: 5,
+    name: 'The Brazos',
+    description: 'An elegant Texas Farmhouse design with wrap-around porch and welcoming interior spaces. Features a downstairs master suite and flexible upstairs bedrooms and game room.',
+    squareFootage: 3200,
+    bedrooms: 4,
+    bathrooms: 3,
+    garages: 2,
+    floors: 2,
+    price: 579,
+    features: ['Wrap-Around Porch', 'Downstairs Master', 'Game Room', 'Flexible Upstairs', 'Butler\'s Pantry', 'Mud Room'],
+    images: {
+      thumbnail: 'https://via.placeholder.com/300x200?text=Brazos',
+      floorplan2d: 'https://via.placeholder.com/800x600?text=Brazos+Floor+Plan',
+      render3d: 'https://via.placeholder.com/800x600?text=Brazos+3D+View'
+    }
+  },
+  {
+    id: 6,
+    name: 'The Llano',
+    description: 'A compact but elegant modern farmhouse design perfect for smaller lots. Features an efficient layout with open concept living and a private master suite.',
+    squareFootage: 2200,
+    bedrooms: 3,
+    bathrooms: 2,
+    garages: 2,
+    floors: 1,
+    price: 399,
+    features: ['Efficient Layout', 'Private Master Suite', 'Open Concept', 'Covered Patio', 'Kitchen Island', 'Walk-in Closets'],
+    images: {
+      thumbnail: 'https://via.placeholder.com/300x200?text=Llano',
+      floorplan2d: 'https://via.placeholder.com/800x600?text=Llano+Floor+Plan',
+      render3d: 'https://via.placeholder.com/800x600?text=Llano+3D+View'
     }
   }
 ];
@@ -278,6 +312,12 @@ function HousePlans() {
             </div>
           </div>
         ))}
+      </div>
+      
+      {/* Attribution */}
+      <div className="attribution">
+        <p>House plans inspired by <a href="https://designtexasstudios.com" target="_blank" rel="noopener noreferrer">Design Texas Studios</a>. 
+        Visit their website for more custom home designs and detailed floor plans.</p>
       </div>
     </div>
   );

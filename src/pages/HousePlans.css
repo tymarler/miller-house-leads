@@ -404,4 +404,23 @@
 .plan-price .add-to-cart-button {
   width: 100%;
   padding: 0.75rem;
+}
+
+/* Attribution */
+.attribution {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #eee;
+  text-align: center;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.attribution a {
+  color: #3182ce;
+  text-decoration: none;
+}
+
+.attribution a:hover {
+  text-decoration: underline;
 } 
