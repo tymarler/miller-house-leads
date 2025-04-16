@@ -1,0 +1,131 @@
+.admin-container {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.admin-container h1 {
+  font-size: 2rem;
+  margin-bottom: 2rem;
+  color: #333;
+}
+
+.error-section {
+  margin-bottom: 2rem;
+  background-color: #fee2e2;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.error-message {
+  color: #dc2626;
+  font-weight: 500;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-details-toggle {
+  background-color: #ef4444;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.error-details-toggle:hover {
+  background-color: #dc2626;
+}
+
+.error-details {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: white;
+  border-radius: 0.25rem;
+}
+
+.error-details h3 {
+  color: #dc2626;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.error-details pre {
+  background-color: #f3f4f6;
+  padding: 1rem;
+  border-radius: 0.25rem;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+
+.leads-section,
+.appointments-section {
+  margin-bottom: 2rem;
+}
+
+.leads-section h2,
+.appointments-section h2 {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+  color: #4b5563;
+}
+
+.leads-grid,
+.appointments-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.lead-card,
+.appointment-card {
+  background-color: white;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.lead-card h3,
+.appointment-card h3 {
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: #111827;
+}
+
+.lead-card p,
+.appointment-card p {
+  margin: 0.5rem 0;
+  color: #4b5563;
+  font-size: 0.875rem;
+}
+
+.lead-card p:last-child,
+.appointment-card p:last-child {
+  margin-bottom: 0;
+}
+
+.empty-message {
+  padding: 20px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .admin-container {
+    padding: 1rem;
+  }
+
+  .leads-grid,
+  .appointments-grid {
+    grid-template-columns: 1fr;
+  }
+} 

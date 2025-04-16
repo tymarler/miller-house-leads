@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import './Admin.css';
+import API_BASE_URL from '../config';
+import axios from 'axios';
 
-const Admin = () => {
+function Admin() {
   const [leads, setLeads] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [errorDetails, setErrorDetails] = useState(null);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -13,157 +18,147 @@ const Admin = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      setError(null);
+      setErrorDetails(null);
+      setShowErrorDetails(false);
+
       const [leadsResponse, appointmentsResponse] = await Promise.all([
-        fetch('http://localhost:3001/api/leads'),
-        fetch('http://localhost:3001/api/appointments')
+        axios.get(`${API_BASE_URL}/api/leads`),
+        axios.get(`${API_BASE_URL}/api/appointments`)
       ]);
 
-      if (!leadsResponse.ok || !appointmentsResponse.ok) {
-        throw new Error('Failed to fetch data');
+      // Log the full responses for debugging
+      console.log('Leads API response:', leadsResponse);
+      console.log('Appointments API response:', appointmentsResponse);
+
+      // Check if the response has the expected structure
+      if (leadsResponse.data && leadsResponse.data.success) {
+        setLeads(leadsResponse.data.data || []);
+        console.log('Setting leads:', leadsResponse.data.data);
+      } else {
+        console.error('Unexpected leads response format:', leadsResponse.data);
+        setLeads([]);
       }
 
-      const leadsData = await leadsResponse.json();
-      const appointmentsData = await appointmentsResponse.json();
-
-      // Map appointments to leads
-      const leadsWithAppointments = leadsData.map(lead => {
-        const appointment = appointmentsData.find(apt => apt.leadId === lead._id);
-        return {
-          ...lead,
-          appointment: appointment || null
-        };
-      });
-
-      setLeads(leadsWithAppointments);
-      setAppointments(appointmentsData);
-      setError(null);
+      if (appointmentsResponse.data && appointmentsResponse.data.success) {
+        setAppointments(appointmentsResponse.data.data || []);
+      } else {
+        console.error('Unexpected appointments response format:', appointmentsResponse.data);
+        setAppointments([]);
+      }
     } catch (err) {
-      setError('Failed to load data. Please try again later.');
       console.error('Error fetching data:', err);
+      setError('Failed to load data. Please try again later.');
+      setErrorDetails({
+        message: err.message,
+        stack: err.stack,
+        name: err.name,
+        code: err.code,
+        config: err.config ? {
+          url: err.config.url,
+          method: err.config.method,
+          headers: err.config.headers
+        } : null
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
-        <div className="relative py-3 sm:max-w-xl sm:mx-auto">
-          <div className="relative px-4 py-10 bg-white mx-8 md:mx-0 shadow rounded-3xl sm:p-10">
-            <div className="max-w-md mx-auto">
-              <div className="flex items-center space-x-5">
-                <div className="block pl-2 font-semibold text-xl self-start text-gray-700">
-                  <h2 className="leading-relaxed">Loading...</h2>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const formatNeo4jDate = (dateObj) => {
+    if (!dateObj) return 'N/A';
+    
+    if (typeof dateObj === 'string') {
+      return new Date(dateObj).toLocaleDateString();
+    }
+    
+    if (dateObj.year && dateObj.month && dateObj.day) {
+      const year = dateObj.year.low || dateObj.year;
+      const month = (dateObj.month.low || dateObj.month) - 1;
+      const day = dateObj.day.low || dateObj.day;
+      return new Date(year, month, day).toLocaleDateString();
+    }
+    
+    return 'Invalid Date';
+  };
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
-        <div className="relative py-3 sm:max-w-xl sm:mx-auto">
-          <div className="relative px-4 py-10 bg-white mx-8 md:mx-0 shadow rounded-3xl sm:p-10">
-            <div className="max-w-md mx-auto">
-              <div className="flex items-center space-x-5">
-                <div className="block pl-2 font-semibold text-xl self-start text-gray-700">
-                  <h2 className="leading-relaxed text-red-600">{error}</h2>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+  const toggleErrorDetails = () => {
+    setShowErrorDetails(!showErrorDetails);
+  };
+
+  if (loading) {
+    return <div className="admin-container">Loading...</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
-      <div className="relative py-3 sm:max-w-xl sm:mx-auto">
-        <div className="relative px-4 py-10 bg-white mx-8 md:mx-0 shadow rounded-3xl sm:p-10">
-          <div className="max-w-md mx-auto">
-            <div className="divide-y divide-gray-200">
-              <div className="py-8 text-base leading-6 space-y-4 text-gray-700 sm:text-lg sm:leading-7">
-                <h2 className="text-2xl font-bold mb-4">Leads</h2>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">State</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Score</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created At</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Appointment</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {leads.map((lead) => (
-                        <tr key={lead._id}>
-                          <td className="px-6 py-4 whitespace-nowrap">{lead.name}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">{lead.email}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">{lead.phone}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">{lead.state}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">{lead.score}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">{lead.status}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">{new Date(lead.createdAt).toLocaleDateString()}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            {lead.appointment ? (
-                              <div>
-                                <div>{new Date(lead.appointment.date).toLocaleDateString()}</div>
-                                <div>{lead.appointment.time}</div>
-                                <div className="text-sm text-gray-500">{lead.appointment.status}</div>
-                              </div>
-                            ) : (
-                              <span className="text-gray-400">No appointment</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              <div className="pt-8 text-base leading-6 space-y-4 text-gray-700 sm:text-lg sm:leading-7">
-                <h2 className="text-2xl font-bold mb-4">Appointments</h2>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lead Name</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {appointments.map((appointment) => {
-                        const lead = leads.find(l => l._id === appointment.leadId);
-                        return (
-                          <tr key={appointment._id}>
-                            <td className="px-6 py-4 whitespace-nowrap">{new Date(appointment.date).toLocaleDateString()}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{appointment.time}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{appointment.status}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{lead ? lead.name : 'Unknown'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+    <div className="admin-container">
+      <h1>Admin Dashboard</h1>
+      
+      {error && (
+        <div className="error-section">
+          <div className="error-message">
+            {error}
+            <button 
+              className="error-details-toggle"
+              onClick={toggleErrorDetails}
+            >
+              {showErrorDetails ? 'Hide Details' : 'Show Details'}
+            </button>
           </div>
+          {showErrorDetails && errorDetails && (
+            <div className="error-details">
+              <h3>Error Details:</h3>
+              <pre>
+                {JSON.stringify(errorDetails, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="leads-section">
+        <h2>Leads ({leads.length})</h2>
+        <div className="leads-grid">
+          {leads.map(lead => (
+            <div key={lead.id} className="lead-card">
+              <h3>{lead.name}</h3>
+              <p>Email: {lead.email}</p>
+              <p>Phone: {lead.phone}</p>
+              <p>State: {lead.state || 'N/A'}</p>
+              <p>Square Footage: {lead.squareFootage || 'N/A'}</p>
+              <p>Timeline: {lead.timeline || 'N/A'}</p>
+              <p>Financing: {lead.financingStatus || 'N/A'}</p>
+              <p>Lot Status: {lead.lotStatus || 'N/A'}</p>
+              <p>Status: {lead.status || 'New'}</p>
+              <p>Created: {lead.createdAt ? new Date(lead.createdAt).toLocaleString() : 'N/A'}</p>
+            </div>
+          ))}
+          {leads.length === 0 && (
+            <div className="empty-message">No leads found</div>
+          )}
+        </div>
+      </div>
+
+      <div className="appointments-section">
+        <h2>Appointments ({appointments.length})</h2>
+        <div className="appointments-grid">
+          {appointments.map(appointment => (
+            <div key={appointment.id} className="appointment-card">
+              <h3>{appointment.id}</h3>
+              <p>Date: {formatNeo4jDate(appointment.date)}</p>
+              <p>Time: {appointment.time}</p>
+              <p>Notes: {appointment.notes || ''}</p>
+              <p>Status: {appointment.status}</p>
+              <p>Created: {appointment.createdAt ? new Date(appointment.createdAt).toLocaleString() : 'N/A'}</p>
+            </div>
+          ))}
+          {appointments.length === 0 && (
+            <div className="empty-message">No appointments found</div>
+          )}
         </div>
       </div>
     </div>
   );
-};
+}
 
 export default Admin; 

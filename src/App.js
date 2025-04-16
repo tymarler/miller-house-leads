@@ -10,6 +10,9 @@ import PhotoGallery from './pages/PhotoGallery';
 import VideoGallery from './pages/VideoGallery';
 import { PhotoIcon, VideoCameraIcon, UserGroupIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 import Admin from './pages/Admin';
+import TestAPI from './pages/TestAPI';
+import DebugAPI from './pages/DebugAPI';
+import API_BASE_URL from './config';
 
 // Cost per square foot ranges by state
 const stateCostRanges = {
@@ -283,21 +286,15 @@ function App() {
     const status = getQualificationStatus(score);
     
     try {
-      const response = await fetch('http://localhost:3001/api/leads', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...formData,
-          score,
-          status: status.status,
-          emailSubject: status.emailSubject,
-          emailBody: status.emailBody
-        }),
+      const response = await axios.post(`${API_BASE_URL}/api/leads`, {
+        ...formData,
+        score,
+        status: status.status,
+        emailSubject: status.emailSubject,
+        emailBody: status.emailBody
       });
 
-      if (response.ok) {
+      if (response.data.success) {
         if (score >= 25) { // Medium or High priority
           setShowScheduler(true);
           setShowModal(false);
@@ -319,40 +316,123 @@ function App() {
   const handleScheduleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedDate || !selectedTime) {
-      setError('Please select both a date and time');
+      setError('Please select both date and time');
       return;
     }
 
+    console.log('Selected date:', selectedDate);
+    console.log('Selected time:', selectedTime);
+
     setSubmitting(true);
     try {
-      const response = await fetch('http://localhost:3001/api/appointments/schedule', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          date: selectedDate,
-          time: selectedTime,
-          leadEmail: formData.email
-        }),
+      // Format date properly - use dateFormatted if available
+      const formattedDate = selectedDate.includes('T') 
+        ? selectedDate.split('T')[0]  // Extract date part from ISO string
+        : selectedDate;
+      
+      console.log('Scheduling appointment with data:', {
+        date: formattedDate,
+        time: selectedTime,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to schedule appointment');
-      }
+      const response = await axios.post(`${API_BASE_URL}/api/appointments`, {
+        date: formattedDate,
+        time: selectedTime,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        service: 'Initial Consultation'
+      });
 
-      const data = await response.json();
-      if (data.success) {
-        setSuccess('Appointment scheduled successfully!');
+      console.log('Appointment response:', response.data);
+
+      if (response.data && response.data.success) {
+        // Format the date nicely
+        const apptDate = new Date(formattedDate);
+        const displayDate = apptDate.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long', 
+          day: 'numeric'
+        });
+        
+        // Format the time nicely
+        const timeDisplay = new Date(`2000-01-01T${selectedTime}`).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+        
+        setSuccess(
+          <div className="space-y-5 text-center">
+            <div className="text-green-600">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            
+            <h3 className="text-2xl font-bold text-gray-900">Your Appointment is Confirmed!</h3>
+            
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 my-4">
+              <div className="flex items-center mb-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <span className="font-medium text-gray-800">{displayDate}</span>
+              </div>
+              <div className="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="font-medium text-gray-800">{timeDisplay}</span>
+              </div>
+            </div>
+            
+            <p className="text-gray-700">We've sent a confirmation email to <span className="font-medium">{formData.email}</span> with important preparation details.</p>
+            
+            <div className="mt-3 bg-yellow-50 p-4 rounded-lg border border-yellow-100">
+              <h4 className="font-medium text-gray-800 mb-2">Please Bring to Your Consultation:</h4>
+              <ul className="text-left text-gray-700 space-y-1 pl-5 list-disc">
+                <li>Inspiration photos or examples</li>
+                <li>Preliminary budget information</li>
+                <li>Any existing floor plans or surveys</li>
+                <li>Questions you have about the design process</li>
+              </ul>
+            </div>
+            
+            {response.data.emailSent === false && (
+              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+                <p className="text-yellow-800">
+                  <span className="font-medium">Note:</span> We were unable to send the confirmation email.
+                  Please save your appointment details shown above.
+                </p>
+              </div>
+            )}
+          </div>
+        );
         setShowScheduler(false);
-        // Update the appointments list
-        fetchAvailableAppointments();
+        setCurrentStep(1);
+        setFormData({
+          name: '',
+          email: '',
+          phone: '',
+          state: '',
+          squareFootage: '',
+          timeline: '',
+          financingStatus: '',
+          lotStatus: '',
+          budgetRange: '',
+          score: 0
+        });
       } else {
-        setError(data.message || 'Failed to schedule appointment');
+        setError(response.data?.error || 'Failed to schedule appointment');
       }
     } catch (error) {
       console.error('Error scheduling appointment:', error);
-      setError('Failed to schedule appointment. Please try again later.');
+      console.error('Error details:', error.response?.data || 'No response data');
+      setError(error.response?.data?.error || 'Failed to schedule appointment. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -360,28 +440,50 @@ function App() {
 
   const handlePersonalInfoSubmit = async (e) => {
     e.preventDefault();
+    console.log('Form submitted, validating fields...');
     
     // Validate required fields
     if (!formData.name || !formData.email || !formData.phone || !formData.state) {
       setError('Please fill in all required fields');
       return;
     }
-
+    
     try {
+      console.log('Checking for existing appointments...');
       // Check for existing appointments
-      const response = await fetch('http://localhost:3001/api/appointments');
-      const appointments = await response.json();
+      const response = await axios.get(`${API_BASE_URL}/api/appointments`);
+      console.log('API response received:', response);
+      
+      if (!response.data || !response.data.data) {
+        console.log('Unexpected API response format:', response.data);
+        // Proceed to next step if we can't properly check
+        setCurrentStep(2);
+        return;
+      }
+      
+      const appointments = response.data.data;
+      console.log('Appointments retrieved:', appointments.length);
       
       // Check if user already has an appointment
-      const existingAppointment = appointments.find(apt => 
-        apt.leadEmail === formData.email || 
-        apt.leadPhone === formData.phone
-      );
-
+      const existingAppointment = appointments.find(apt => {
+        // Handle both possible data structures
+        const email = apt.leadEmail || (apt.lead && apt.lead.email);
+        const phone = apt.leadPhone || (apt.lead && apt.lead.phone);
+        
+        return (email && email === formData.email) || 
+               (phone && phone === formData.phone);
+      });
+      
       if (existingAppointment) {
+        console.log('Existing appointment found:', existingAppointment);
+        
+        // Get appointment details with proper fallbacks
+        const aptDate = existingAppointment.date ? new Date(existingAppointment.date) : new Date();
+        const aptTime = existingAppointment.time || '12:00';
+        
         setError(
           <div>
-            <p>You already have an appointment scheduled for {new Date(existingAppointment.date).toLocaleDateString()} at {existingAppointment.time}.</p>
+            <p>You already have an appointment scheduled for {aptDate.toLocaleDateString()} at {aptTime}.</p>
             <p>Would you like to reschedule?</p>
             <div className="mt-4 flex gap-4">
               <button
@@ -408,11 +510,16 @@ function App() {
         return;
       }
 
+      console.log('No existing appointment found, proceeding to next step');
       // If no existing appointment, proceed to next step
       setCurrentStep(2);
     } catch (error) {
       console.error('Error checking appointments:', error);
-      setError('Error checking appointment status. Please try again.');
+      console.error('Error details:', error.response ? error.response.data : 'No response data');
+      
+      // Continue to next step despite error
+      console.log('Proceeding to next step despite error');
+      setCurrentStep(2);
     }
   };
 
@@ -431,7 +538,7 @@ function App() {
         squareFootage: parseInt(formData.squareFootage)
       };
 
-      const response = await axios.post('http://localhost:3001/api/leads', leadData);
+      const response = await axios.post(`${API_BASE_URL}/api/leads`, leadData);
       
       if (response.data.success) {
         // Show scheduling section immediately
@@ -439,7 +546,7 @@ function App() {
         setCurrentStep('scheduling');
         // Fetch available appointments
         fetchAvailableAppointments();
-      } else {
+    } else {
         alert('Error saving lead data. Please try again.');
       }
     } catch (error) {
@@ -453,7 +560,7 @@ function App() {
       const score = getQualificationScore();
       const status = getQualificationStatus(score);
       
-      const response = await axios.post('http://localhost:3001/api/leads', {
+      const response = await axios.post(`${API_BASE_URL}/api/leads`, {
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
@@ -491,15 +598,22 @@ function App() {
 
   const fetchAvailableAppointments = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/appointments');
-      if (!response.ok) {
-        throw new Error('Failed to fetch appointments');
+      console.log('Fetching available appointments...');
+      const response = await axios.get(`${API_BASE_URL}/api/appointments?status=available`);
+      console.log('API response:', response.data);
+      
+      if (response.data && response.data.success && Array.isArray(response.data.data)) {
+        console.log(`Found ${response.data.data.length} appointments`);
+        setAvailableAppointments(response.data.data.filter(apt => apt.status === 'available'));
+      } else {
+        console.error('Unexpected API response format:', response.data);
+        setAvailableAppointments([]);
+        setError('Failed to load appointments: Unexpected data format');
       }
-      const data = await response.json();
-      setAvailableAppointments(data);
     } catch (error) {
       console.error('Error fetching appointments:', error);
       setError('Failed to load available appointments. Please try again later.');
+      setAvailableAppointments([]);
     }
   };
 
@@ -543,7 +657,7 @@ function App() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const response = await axios.post('http://localhost:3001/api/submit-form', formData);
+      const response = await axios.post(`${API_BASE_URL}/api/submit-form`, formData);
       setSuccess('Form submitted successfully!');
       setShowModal(false);
     } catch (err) {
@@ -571,7 +685,7 @@ function App() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const response = await axios.post('http://localhost:3001/api/filter', formData);
+      const response = await axios.post(`${API_BASE_URL}/api/filter`, formData);
       setQualificationScore(response.data.score);
       setShowScheduler(response.data.qualified);
       setShowSuccessMessage(true);
@@ -919,6 +1033,8 @@ function App() {
                 <Route path="/photo-gallery" element={<PhotoGallery />} />
                 <Route path="/video-gallery" element={<VideoGallery />} />
                 <Route path="/about" element={<About />} />
+                <Route path="/test-api" element={<TestAPI />} />
+                <Route path="/debug-api" element={<DebugAPI />} />
               </Routes>
 
               {showSuccessMessage && (
@@ -974,18 +1090,29 @@ function App() {
                                 }}
                               >
                                 <div className="font-medium">
-                                  {new Date(appointment.date).toLocaleDateString('en-US', {
-                                    weekday: 'long',
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric',
-                                  })}
+                                  {appointment.dateFormatted 
+                                    ? new Date(appointment.dateFormatted).toLocaleDateString('en-US', {
+                                        weekday: 'long',
+                                        year: 'numeric',
+                                        month: 'long',
+                                        day: 'numeric',
+                                      })
+                                    : new Date(appointment.date.split('T')[0]).toLocaleDateString('en-US', {
+                                        weekday: 'long',
+                                        year: 'numeric',
+                                        month: 'long',
+                                        day: 'numeric',
+                                      })
+                                  }
                                 </div>
                                 <div className="text-gray-600">
-                                  {new Date(`2000-01-01T${appointment.time}`).toLocaleTimeString('en-US', {
-                                    hour: 'numeric',
-                                    minute: '2-digit',
-                                  })}
+                                  {appointment.time 
+                                    ? new Date(`2000-01-01T${appointment.time}`).toLocaleTimeString('en-US', {
+                                        hour: 'numeric',
+                                        minute: '2-digit',
+                                      })
+                                    : '(No time specified)'
+                                  }
                                 </div>
                               </div>
                             ))
@@ -1016,6 +1143,35 @@ function App() {
                         </button>
                       </div>
                     </form>
+                  </div>
+                </div>
+              )}
+
+              {success && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                  <div className="bg-white rounded-lg p-6 max-w-lg w-full">
+                    <div className="mb-4 flex justify-between">
+                      <div className="text-2xl font-bold">Appointment Confirmed</div>
+                      <button
+                        onClick={() => setSuccess(null)}
+                        className="text-gray-400 hover:text-gray-500"
+                      >
+                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="overflow-y-auto max-h-[70vh]">
+                      {success}
+                    </div>
+                    <div className="mt-6 flex justify-end">
+                      <button
+                        onClick={() => setSuccess(null)}
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        Close
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
