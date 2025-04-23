@@ -13,6 +13,7 @@ import Admin from './pages/Admin';
 import TestAPI from './pages/TestAPI';
 import DebugAPI from './pages/DebugAPI';
 import HousePlans from './pages/HousePlans';
+import DTSVideos from './pages/DTSVideos';
 import API_BASE_URL from './config';
 
 // Cost per square foot ranges by state
@@ -807,6 +808,9 @@ function App() {
                         <Link to="/house-plans" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
                           House Plans
                         </Link>
+                        <Link to="/dts-videos" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
+                          2D/3D Videos
+                        </Link>
                         <Link to="/about" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
                           About
                         </Link>
@@ -1040,6 +1044,7 @@ function App() {
                 <Route path="/test-api" element={<TestAPI />} />
                 <Route path="/debug-api" element={<DebugAPI />} />
                 <Route path="/house-plans" element={<HousePlans />} />
+                <Route path="/dts-videos" element={<DTSVideos />} />
               </Routes>
 
               {showSuccessMessage && (
