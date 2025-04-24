@@ -6,19 +6,19 @@ const VideoGallery = () => {
       id: 1,
       title: 'Modern Farmhouse Design Process',
       description: 'Watch our team transform a traditional farmhouse into a modern masterpiece with sustainable materials and innovative design solutions.',
-      videoUrl: 'https://www.youtube.com/embed/example1'
+      videoUrl: 'https://www.youtube.com/embed/y5zMzfms2S0'
     },
     {
       id: 2,
       title: 'Interior Design Transformation',
       description: 'See how we revitalized a contemporary living space with custom furniture, lighting, and artistic elements.',
-      videoUrl: 'https://www.youtube.com/embed/example2'
+      videoUrl: 'https://www.youtube.com/embed/Vd9h3dly0X0'
     },
     {
       id: 3,
       title: 'Historic Home Renovation',
       description: 'Follow the journey of restoring a historic home while preserving its character and adding modern amenities.',
-      videoUrl: 'https://www.youtube.com/embed/example3'
+      videoUrl: 'https://www.youtube.com/embed/D-H6jLrpNX8'
     }
   ];
 

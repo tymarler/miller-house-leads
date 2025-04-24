@@ -132,9 +132,7 @@ function App() {
     phone: '',
     state: '',
     squareFootage: '',
-    timeline: '',
-    financingStatus: '',
-    lotStatus: ''
+    financingStatus: ''
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -158,24 +156,20 @@ function App() {
   const [existingAppointment, setExistingAppointment] = useState(null);
   const [emailCheckStatus, setEmailCheckStatus] = useState(null);
   const [costs, setCosts] = useState(null);
+  const [formError, setFormError] = useState('');
 
   const getQualificationScore = () => {
     let score = 0;
     
-    // Timeline
-    if (formData.timeline === 'Immediate') score += 15;
-    else if (formData.timeline === '3-6 months') score += 10;
-    else if (formData.timeline === '6-12 months') score += 5;
-    
-    // Financing Status
-    if (formData.financingStatus === 'Ready to proceed') score += 15;
-    else if (formData.financingStatus === 'Pre-approved') score += 10;
-    else if (formData.financingStatus === 'In process') score += 5;
-    
-    // Lot Status
-    if (formData.lotStatus === 'Owned') score += 15;
-    else if (formData.lotStatus === 'Under contract') score += 10;
-    else if (formData.lotStatus === 'Looking') score += 5;
+    // Score based on financing status
+    if (formData.financingStatus === 'Building with cash') {
+      score += 15;
+    } else if (formData.financingStatus === 'Financing arranged') {
+      score += 10;
+    } else if (formData.financingStatus === 'Pre Approved') {
+      score += 5;
+    }
+    // "Not ready" gets 0 points
     
     return score;
   };
@@ -279,7 +273,7 @@ function App() {
 
   const handleQualificationSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.squareFootage || !formData.timeline || !formData.financingStatus || !formData.lotStatus) {
+    if (!formData.squareFootage || !formData.financingStatus) {
       setError('Please fill in all required fields');
       return;
     }
@@ -422,9 +416,7 @@ function App() {
           phone: '',
           state: '',
           squareFootage: '',
-          timeline: '',
           financingStatus: '',
-          lotStatus: '',
           budgetRange: '',
           score: 0
         });
@@ -440,89 +432,83 @@ function App() {
     }
   };
 
-  const handlePersonalInfoSubmit = async (e) => {
-    e.preventDefault();
-    console.log('Form submitted, validating fields...');
+  const handlePersonalInfoSubmit = (e) => {
+    // Add form event prevention
+    if (e) e.preventDefault();
     
-    // Validate required fields
-    if (!formData.name || !formData.email || !formData.phone || !formData.state) {
-      setError('Please fill in all required fields');
+    console.log("Form submitted with data:", formData);
+    
+    // Error checking
+    if (!formData.name || !formData.email || !formData.phone || !formData.state || !formData.financingStatus || !formData.squareFootage) {
+      setFormError('Please fill out all required fields');
       return;
     }
-    
-    try {
-      console.log('Checking for existing appointments...');
-      // Check for existing appointments
-      const response = await axios.get(`${API_BASE_URL}/api/appointments`);
-      console.log('API response received:', response);
-      
-      if (!response.data || !response.data.data) {
-        console.log('Unexpected API response format:', response.data);
-        // Proceed to next step if we can't properly check
-        setCurrentStep(2);
-        return;
-      }
-      
-      const appointments = response.data.data;
-      console.log('Appointments retrieved:', appointments.length);
-      
-      // Check if user already has an appointment
-      const existingAppointment = appointments.find(apt => {
-        // Handle both possible data structures
-        const email = apt.leadEmail || (apt.lead && apt.lead.email);
-        const phone = apt.leadPhone || (apt.lead && apt.lead.phone);
-        
-        return (email && email === formData.email) || 
-               (phone && phone === formData.phone);
-      });
-      
-      if (existingAppointment) {
-        console.log('Existing appointment found:', existingAppointment);
-        
-        // Get appointment details with proper fallbacks
-        const aptDate = existingAppointment.date ? new Date(existingAppointment.date) : new Date();
-        const aptTime = existingAppointment.time || '12:00';
-        
-        setError(
-          <div>
-            <p>You already have an appointment scheduled for {aptDate.toLocaleDateString()} at {aptTime}.</p>
-            <p>Would you like to reschedule?</p>
-            <div className="mt-4 flex gap-4">
-              <button
-                onClick={() => {
-                  setError('');
-                  setCurrentStep(2);
-                }}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
-              >
-                Yes, Reschedule
-              </button>
-              <button
-                onClick={() => {
-                  setError('');
-                  handleContactClick();
-                }}
-                className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded"
-              >
-                No, Contact Support
-              </button>
-            </div>
-          </div>
-        );
-        return;
-      }
 
-      console.log('No existing appointment found, proceeding to next step');
-      // If no existing appointment, proceed to next step
-      setCurrentStep(2);
-    } catch (error) {
-      console.error('Error checking appointments:', error);
-      console.error('Error details:', error.response ? error.response.data : 'No response data');
-      
-      // Continue to next step despite error
-      console.log('Proceeding to next step despite error');
-      setCurrentStep(2);
+    // Email validation
+    if (!/\S+@\S+\.\S+/.test(formData.email)) {
+      setFormError('Please enter a valid email address');
+      return;
     }
+
+    // Phone validation
+    if (!/^\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})$/.test(formData.phone)) {
+      setFormError('Please enter a valid phone number');
+      return;
+    }
+
+    // Square footage validation
+    if (isNaN(parseFloat(formData.squareFootage)) || parseFloat(formData.squareFootage) <= 0) {
+      setFormError('Please enter a valid square footage');
+      return;
+    }
+
+    setFormError('');
+    console.log("Validation passed, submitting to server");
+    
+    // Calculate qualification score
+    const qualificationScore = getQualificationScore();
+    console.log("Qualification score:", qualificationScore);
+    
+    // Submit to the server using axios
+    setSubmitting(true);
+    axios.post(`${API_BASE_URL}/api/leads`, {
+      name: formData.name,
+      email: formData.email,
+      phone: formData.phone,
+      state: formData.state,
+      squareFootage: formData.squareFootage,
+      financingStatus: formData.financingStatus,
+      qualificationScore
+    })
+    .then(response => {
+      console.log('Server response:', response.data);
+      setSubmitting(false);
+      
+      if (response.data.success) {
+        // First hide the form modal
+        setShowModal(false);
+        
+        // Check if user selected "Not ready"
+        if (formData.financingStatus === "Not ready") {
+          console.log("User selected 'Not ready', showing success message");
+          // Show success message with cost estimation
+          setShowSuccessMessage(true);
+          setSuccessMessage(`Thank you for your submission. Your estimated project cost is $${costs.average.toLocaleString()}.`);
+        } else {
+          console.log("User is ready for scheduling, showing scheduler");
+          // Show scheduling options
+          setShowScheduler(true);
+          fetchAvailableAppointments();
+        }
+      } else {
+        setFormError('Failed to submit form. Please try again.');
+      }
+    })
+    .catch(error => {
+      console.error('Error submitting form:', error);
+      setSubmitting(false);
+      setFormError('There was an error submitting your information. Please try again.');
+    });
   };
 
   const handleCostSubmit = () => {
@@ -568,9 +554,7 @@ function App() {
         phone: formData.phone,
         state: formData.state,
         squareFootage: formData.squareFootage,
-        timeline: formData.timeline,
         financingStatus: formData.financingStatus,
-        lotStatus: formData.lotStatus,
         qualificationScore: score,
         status: status.status,
         emailSubject: status.emailSubject,
@@ -588,9 +572,7 @@ function App() {
           phone: '',
           state: '',
           squareFootage: '',
-          timeline: '',
-          financingStatus: '',
-          lotStatus: ''
+          financingStatus: ''
         });
       }
     } catch (error) {
@@ -599,14 +581,40 @@ function App() {
   };
 
   const fetchAvailableAppointments = async () => {
+    console.log("Fetching available appointments...");
+    
     try {
-      console.log('Fetching available appointments...');
+      // Clear previous error
+      setError('');
+      
       const response = await axios.get(`${API_BASE_URL}/api/appointments?status=available`);
-      console.log('API response:', response.data);
+      console.log('API response for appointments:', response.data);
       
       if (response.data && response.data.success && Array.isArray(response.data.data)) {
-        console.log(`Found ${response.data.data.length} appointments`);
-        setAvailableAppointments(response.data.data.filter(apt => apt.status === 'available'));
+        console.log(`Found ${response.data.data.length} appointments in response`);
+        
+        // Filter to only show appointments with 'available' status
+        const availableAppointmentsList = response.data.data.filter(apt => 
+          apt.status === 'available' || apt.status === 'booked' || apt.status === 'scheduled'
+        );
+        
+        console.log(`After filtering, ${availableAppointmentsList.length} appointments are available`);
+        console.log('Available appointments:', availableAppointmentsList);
+        
+        setAvailableAppointments(availableAppointmentsList);
+        
+        // Force scheduler visibility again after loading appointments
+        if (availableAppointmentsList.length > 0) {
+          console.log("Ensuring scheduler is visible after loading appointments");
+          setShowScheduler(true);
+          
+          // If we have appointments, pre-select the first one
+          if (availableAppointmentsList.length > 0) {
+            const firstAppointment = availableAppointmentsList[0];
+            setSelectedDate(firstAppointment.date);
+            setSelectedTime(firstAppointment.time);
+          }
+        }
       } else {
         console.error('Unexpected API response format:', response.data);
         setAvailableAppointments([]);
@@ -645,9 +653,7 @@ function App() {
       phone: '',
       state: '',
       squareFootage: '',
-      timeline: '',
-      financingStatus: '',
-      lotStatus: ''
+      financingStatus: ''
     });
     setQualificationScore(0);
     setShowScheduler(false);
@@ -704,6 +710,7 @@ function App() {
     <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-lg">
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Project Qualification</h2>
       <form onSubmit={handleFilterSubmit} className="space-y-6">
+        {/* Timeline question commented out
         <div>
           <label className="block text-sm font-medium text-gray-700">Timeline</label>
           <select
@@ -719,6 +726,7 @@ function App() {
             <option value="Just exploring">Just exploring</option>
           </select>
         </div>
+        */}
 
         <div>
           <label className="block text-sm font-medium text-gray-700">Financing Status</label>
@@ -729,13 +737,14 @@ function App() {
             required
           >
             <option value="">Select financing status</option>
-            <option value="Ready to proceed">Ready to proceed</option>
-            <option value="Pre-approved">Pre-approved</option>
-            <option value="In process">In process</option>
-            <option value="Not started">Not started</option>
+            <option value="Building with cash">Building with cash</option>
+            <option value="Financing arranged">Financing arranged</option>
+            <option value="Pre Approved">Pre Approved</option>
+            <option value="Not ready">Not ready</option>
           </select>
         </div>
 
+        {/* Lot Status question commented out
         <div>
           <label className="block text-sm font-medium text-gray-700">Lot Status</label>
           <select
@@ -751,14 +760,28 @@ function App() {
             <option value="Not started">Not started</option>
           </select>
         </div>
+        */}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-        >
-          {submitting ? 'Submitting...' : 'Submit'}
-        </button>
+        <div className="flex justify-between">
+          <button
+            type="button"
+            onClick={() => {
+              console.log("Debug: Directly showing scheduler");
+              setShowModal(false);
+              setShowScheduler(true);
+              fetchAvailableAppointments();
+            }}
+            className="bg-gray-300 text-gray-700 px-3 py-1 rounded-lg hover:bg-gray-400 transition-colors text-xs"
+          >
+            Test Scheduler
+          </button>
+          <button
+            type="submit"
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Submit
+          </button>
+        </div>
       </form>
     </div>
   );
@@ -788,6 +811,13 @@ function App() {
 
         <Routes>
           <Route path="/admin" element={<Admin />} />
+          <Route path="/photo-gallery" element={<PhotoGallery />} />
+          <Route path="/video-gallery" element={<VideoGallery />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/test-api" element={<TestAPI />} />
+          <Route path="/debug-api" element={<DebugAPI />} />
+          <Route path="/house-plans" element={<HousePlans />} />
+          <Route path="/dts-videos" element={<DTSVideos />} />
           <Route path="/" element={
             <div className="min-h-screen bg-gray-50">
               {/* Navigation */}
@@ -860,21 +890,18 @@ function App() {
                   <div className="bg-white rounded-lg max-w-2xl w-full p-6">
                     <div className="flex justify-between items-center mb-4">
                       <h2 className="text-2xl font-bold text-gray-900">
-                        {currentStep === 1 ? 'Personal Information' : 'Project Information'}
+                        Project Information
                       </h2>
                       <button
                         onClick={() => {
                           setShowModal(false);
-                          setCurrentStep(1);
                           setFormData({
                             name: '',
                             email: '',
                             phone: '',
                             state: '',
                             squareFootage: '',
-                            timeline: '',
-                            financingStatus: '',
-                            lotStatus: ''
+                            financingStatus: ''
                           });
                         }}
                         className="text-gray-400 hover:text-gray-500"
@@ -886,199 +913,165 @@ function App() {
                       </button>
                     </div>
 
-                    {currentStep === 1 && (
-                      <form onSubmit={handlePersonalInfoSubmit} className="space-y-6">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Name</label>
-                          <input
-                            type="text"
-                            name="name"
-                            value={formData.name}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Email</label>
-                          <input
-                            type="email"
-                            name="email"
-                            value={formData.email}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Phone</label>
-                          <input
-                            type="tel"
-                            name="phone"
-                            value={formData.phone}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">State</label>
-                          <select
-                            name="state"
-                            value={formData.state}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          >
-                            <option value="">Select your state</option>
-                            {Object.keys(stateCostRanges).map(state => (
-                              <option key={state} value={state}>{state}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="flex justify-end">
-                          <button
-                            type="submit"
-                            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </form>
-                    )}
-
-                    {currentStep === 2 && (
-                      <form onSubmit={handleQualificationSubmit} className="space-y-6">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Square Footage</label>
-                          <input
-                            type="number"
-                            name="squareFootage"
-                            value={formData.squareFootage}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Financing Status</label>
-                          <select
-                            name="financingStatus"
-                            value={formData.financingStatus}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          >
-                            <option value="">Select your financing status</option>
-                            <option value="Ready to proceed">Ready to proceed</option>
-                            <option value="Pre-approved">Pre-approved</option>
-                            <option value="In process">In process</option>
-                          </select>
-                        </div>
-                        {costs && (
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                            <div className="bg-green-50 p-3 rounded-lg shadow">
-                              <h3 className="text-sm font-medium text-green-700">Low Estimate</h3>
-                              <p className="text-lg font-semibold text-green-600">${costs.low.toLocaleString()}</p>
+                    <form onSubmit={(e) => handlePersonalInfoSubmit(e)} className="space-y-6">
+                      {formError && (
+                        <div className="bg-red-50 border-l-4 border-red-400 p-4 mb-4">
+                          <div className="flex">
+                            <div className="flex-shrink-0">
+                              <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                              </svg>
                             </div>
-                            <div className="bg-blue-50 p-4 rounded-lg shadow transform scale-105">
-                              <h3 className="text-xl font-semibold text-blue-700">Average Estimate</h3>
-                              <p className="text-3xl font-bold text-blue-600">${costs.average.toLocaleString()}</p>
-                            </div>
-                            <div className="bg-red-50 p-3 rounded-lg shadow">
-                              <h3 className="text-sm font-medium text-red-700">High Estimate</h3>
-                              <p className="text-lg font-semibold text-red-600">${costs.high.toLocaleString()}</p>
+                            <div className="ml-3">
+                              <p className="text-sm text-red-700">{formError}</p>
                             </div>
                           </div>
-                        )}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Timeline</label>
-                          <select
-                            name="timeline"
-                            value={formData.timeline}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          >
-                            <option value="">Select your timeline</option>
-                            <option value="Immediate">Immediate</option>
-                            <option value="3-6 months">3-6 months</option>
-                            <option value="6-12 months">6-12 months</option>
-                            <option value="12+ months">12+ months</option>
-                          </select>
                         </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Lot Status</label>
-                          <select
-                            name="lotStatus"
-                            value={formData.lotStatus}
-                            onChange={handleInputChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                            required
-                          >
-                            <option value="">Select your lot status</option>
-                            <option value="Owned">Owned</option>
-                            <option value="Under contract">Under contract</option>
-                            <option value="Looking">Looking</option>
-                            <option value="Not started">Not started</option>
-                          </select>
+                      )}
+                    
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Name</label>
+                        <input
+                          type="text"
+                          name="name"
+                          value={formData.name}
+                          onChange={handleInputChange}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Email</label>
+                        <input
+                          type="email"
+                          name="email"
+                          value={formData.email}
+                          onChange={handleInputChange}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Phone</label>
+                        <input
+                          type="tel"
+                          name="phone"
+                          value={formData.phone}
+                          onChange={handleInputChange}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">State</label>
+                        <select
+                          name="state"
+                          value={formData.state}
+                          onChange={handleInputChange}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                          required
+                        >
+                          <option value="">Select your state</option>
+                          {Object.keys(stateCostRanges).map(state => (
+                            <option key={state} value={state}>{state}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Square Footage</label>
+                        <input
+                          type="number"
+                          name="squareFootage"
+                          value={formData.squareFootage}
+                          onChange={handleInputChange}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                          required
+                        />
+                      </div>
+                      
+                      {costs && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                          <div className="bg-green-50 p-3 rounded-lg shadow">
+                            <h3 className="text-sm font-medium text-green-700">Low Estimate</h3>
+                            <p className="text-lg font-semibold text-green-600">${costs.low.toLocaleString()}</p>
+                          </div>
+                          <div className="bg-blue-50 p-4 rounded-lg shadow transform scale-105">
+                            <h3 className="text-xl font-semibold text-blue-700">Average Estimate</h3>
+                            <p className="text-3xl font-bold text-blue-600">${costs.average.toLocaleString()}</p>
+                          </div>
+                          <div className="bg-red-50 p-3 rounded-lg shadow">
+                            <h3 className="text-sm font-medium text-red-700">High Estimate</h3>
+                            <p className="text-lg font-semibold text-red-600">${costs.high.toLocaleString()}</p>
+                          </div>
                         </div>
-                        <div className="flex justify-end">
-                          <button
-                            type="submit"
-                            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                          >
-                            Submit
-                          </button>
-                        </div>
-                      </form>
-                    )}
+                      )}
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Financing Status</label>
+                        <select
+                          name="financingStatus"
+                          value={formData.financingStatus}
+                          onChange={handleInputChange}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                          required
+                        >
+                          <option value="">Select your financing status</option>
+                          <option value="Building with cash">Building with cash</option>
+                          <option value="Financing arranged">Financing arranged</option>
+                          <option value="Pre Approved">Pre Approved</option>
+                          <option value="Not ready">Not ready</option>
+                        </select>
+                      </div>
+                      
+                      <div className="flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={submitting}
+                          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        >
+                          {submitting ? 'Submitting...' : 'Submit'}
+                        </button>
+                      </div>
+                    </form>
                   </div>
                 </div>
               )}
 
-              <Routes>
-                <Route path="/photo-gallery" element={<PhotoGallery />} />
-                <Route path="/video-gallery" element={<VideoGallery />} />
-                <Route path="/about" element={<About />} />
-                <Route path="/test-api" element={<TestAPI />} />
-                <Route path="/debug-api" element={<DebugAPI />} />
-                <Route path="/house-plans" element={<HousePlans />} />
-                <Route path="/dts-videos" element={<DTSVideos />} />
-              </Routes>
-
+              {/* Success Message Modal */}
               {showSuccessMessage && (
                 <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4">
                   <div className="bg-white rounded-lg p-6 max-w-md w-full">
                     <h2 className="text-2xl font-bold mb-4">Thank You!</h2>
                     <p className="mb-4">{successMessage}</p>
-                    {qualificationScore >= 50 && (
+                    {costs && (
                       <div className="mb-4">
-                        <p className="text-lg font-semibold">Your Qualification Score: {qualificationScore}%</p>
-                        <p className="text-sm text-gray-600">Estimated Cost: ${costs?.toLocaleString()}</p>
+                        <p className="text-lg font-semibold">Your Project Details</p>
+                        <p className="text-sm text-gray-600">Estimated Cost: ${costs.average.toLocaleString()}</p>
+                        <p className="text-xs text-gray-500">Square Footage: {formData.squareFootage}</p>
+                        <p className="text-xs text-gray-500">Financing: {formData.financingStatus}</p>
                       </div>
                     )}
                     <div className="flex justify-end">
                       <button
                         onClick={() => {
                           setShowSuccessMessage(false);
-                          if (qualificationScore >= 50) {
-                            setShowScheduler(true);
-                          }
+                          resetForm();
                         }}
                         className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
                       >
-                        {qualificationScore >= 50 ? 'Schedule Appointment' : 'Close'}
+                        Close
                       </button>
                     </div>
                   </div>
                 </div>
               )}
 
+              {/* Scheduler Modal */}
               {showScheduler && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                   <div className="bg-white rounded-lg p-6 max-w-md w-full">
                     <h2 className="text-2xl font-bold mb-4">Schedule Your Appointment</h2>
+                    {console.log("Scheduler is visible, appointments:", availableAppointments)}
                     <form onSubmit={handleScheduleSubmit}>
                       <div className="mb-4">
                         <label className="block text-gray-700 text-sm font-bold mb-2">
@@ -1137,10 +1130,14 @@ function App() {
                       <div className="flex justify-end gap-4">
                         <button
                           type="button"
-                          onClick={() => setShowScheduler(false)}
+                          onClick={() => {
+                            setShowScheduler(false);
+                            setShowSuccessMessage(true);
+                            setSuccessMessage(`Thank you for your submission. Your estimated project cost is $${costs.average.toLocaleString()}.`);
+                          }}
                           className="px-4 py-2 text-gray-600 hover:text-gray-800"
                         >
-                          Cancel
+                          Skip Scheduling
                         </button>
                         <button
                           type="submit"
@@ -1157,13 +1154,17 @@ function App() {
                 </div>
               )}
 
+              {/* Confirmation Modal */}
               {success && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                   <div className="bg-white rounded-lg p-6 max-w-lg w-full">
                     <div className="mb-4 flex justify-between">
                       <div className="text-2xl font-bold">Appointment Confirmed</div>
                       <button
-                        onClick={() => setSuccess(null)}
+                        onClick={() => {
+                          setSuccess(null);
+                          resetForm();
+                        }}
                         className="text-gray-400 hover:text-gray-500"
                       >
                         <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1176,7 +1177,10 @@ function App() {
                     </div>
                     <div className="mt-6 flex justify-end">
                       <button
-                        onClick={() => setSuccess(null)}
+                        onClick={() => {
+                          setSuccess(null);
+                          resetForm();
+                        }}
                         className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                       >
                         Close

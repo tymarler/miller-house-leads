@@ -440,7 +440,7 @@ async function executeWithFallback(operation, fallbackOperation) {
 // API endpoints
 app.post('/api/leads', async (req, res) => {
   try {
-    const { name, email, phone, state, squareFootage, timeline, financingStatus, lotStatus } = req.body;
+    const { name, email, phone, state, squareFootage, financingStatus } = req.body;
     
     if (!name || !email || !phone) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -449,20 +449,10 @@ app.post('/api/leads', async (req, res) => {
     // Calculate qualification score
     let qualificationScore = 0;
     
-    // Timeline scoring
-    if (timeline === 'Immediate') qualificationScore += 15;
-    else if (timeline === '3-6 months') qualificationScore += 10;
-    else if (timeline === '6-12 months') qualificationScore += 5;
-    
     // Financing scoring
     if (financingStatus === 'Ready to proceed') qualificationScore += 15;
     else if (financingStatus === 'Pre-approved') qualificationScore += 10;
     else if (financingStatus === 'In process') qualificationScore += 5;
-    
-    // Lot status scoring
-    if (lotStatus === 'Owned') qualificationScore += 15;
-    else if (lotStatus === 'Under contract') qualificationScore += 10;
-    else if (lotStatus === 'Looking') qualificationScore += 5;
 
     const lead = {
       id: uuidv4(),
@@ -471,9 +461,7 @@ app.post('/api/leads', async (req, res) => {
       phone,
       state: state || '',
       squareFootage: squareFootage || '',
-      timeline: timeline || '',
       financingStatus: financingStatus || '',
-      lotStatus: lotStatus || '',
       qualificationScore,
       status: 'New',
       createdAt: new Date().toISOString()
@@ -504,9 +492,7 @@ app.post('/api/leads', async (req, res) => {
                l.phone = $phone,
                l.state = $state,
                l.squareFootage = $squareFootage,
-               l.timeline = $timeline,
                l.financingStatus = $financingStatus,
-               l.lotStatus = $lotStatus,
                l.qualificationScore = $qualificationScore,
                l.status = $status,
                l.updatedAt = datetime()
@@ -517,9 +503,7 @@ app.post('/api/leads', async (req, res) => {
             phone: lead.phone,
             state: lead.state,
             squareFootage: lead.squareFootage,
-            timeline: lead.timeline,
             financingStatus: lead.financingStatus,
-            lotStatus: lead.lotStatus,
             qualificationScore: lead.qualificationScore,
             status: lead.status
           }
@@ -541,9 +525,7 @@ app.post('/api/leads', async (req, res) => {
             phone: $phone,
             state: $state,
             squareFootage: $squareFootage,
-            timeline: $timeline,
             financingStatus: $financingStatus,
-            lotStatus: $lotStatus,
             qualificationScore: $qualificationScore,
             status: $status,
             createdAt: datetime(),
@@ -646,19 +628,13 @@ app.get('/api/leads', async (req, res) => {
 
 app.post('/api/appointments', async (req, res) => {
   try {
+    const { date, time, name, email, phone, service, leadId } = req.body;
     console.log('Received appointment creation request:', req.body);
-    const { leadId, date, time, name, email, phone, service } = req.body;
     
-    // Check required fields - either leadId OR (name, email, phone) must be provided
-    if ((!leadId && (!name || !email || !phone)) || !date || !time) {
-      console.error('Missing required fields:', { leadId, name, email, phone, date, time });
-      return res.status(400).json({ 
-        success: false,
-        error: 'Missing required fields',
-        details: 'Please provide either a leadId or complete contact information (name, email, phone), along with date and time.'
-      });
+    if (!date || !time) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
-
+    
     if (!isConnected) {
       return res.status(503).json({ 
         success: false, 
@@ -666,182 +642,120 @@ app.post('/api/appointments', async (req, res) => {
         message: 'Cannot create appointment without database connection'
       });
     }
-
+    
     const session = driver.session({ database: dbName });
     try {
-      // Check if the appointment slot is available
-      const checkResult = await session.run(
-        `MATCH (a:Appointment) 
-         WHERE date(a.date) = date($date) AND a.time = $time AND a.status = 'scheduled'
-         RETURN a`,
-        { date, time }
-      );
+      // First check if there's already an existing lead with this email
+      let existingLeadId = leadId;
       
-      if (checkResult.records.length > 0) {
-        return res.status(409).json({ 
-          success: false, 
-          error: 'Time slot not available',
-          message: 'This appointment time has already been booked'
-        });
-      }
-      
-      let usedLeadId = leadId;
-      let lead = null;
-      
-      // If no leadId provided, create a new lead or find existing lead by email
-      if (!usedLeadId) {
-        console.log('No leadId provided, checking for existing lead by email:', email);
-        // Check if lead with this email exists
-        const findLeadResult = await session.run(
+      if (!existingLeadId && email) {
+        console.log(`No leadId provided, checking for existing lead by email: ${email}`);
+        const checkResult = await session.run(
           'MATCH (l:Lead {email: $email}) RETURN l',
           { email }
         );
         
-        if (findLeadResult.records.length > 0) {
-          lead = findLeadResult.records[0].get('l').properties;
-          usedLeadId = lead.id;
-          console.log('Found existing lead:', usedLeadId);
-        } else {
-          // Create a new lead
-          const newLeadId = `lead-${uuidv4()}`;
-          console.log('Creating new lead:', newLeadId);
-          
-          const createLeadResult = await session.run(
-            `CREATE (l:Lead {
-              id: $id,
-              name: $name,
-              email: $email,
-              phone: $phone,
-              status: 'New',
-              createdAt: datetime(),
-              updatedAt: datetime()
-            }) RETURN l`,
-            { 
-              id: newLeadId,
-              name,
-              email,
-              phone
-            }
-          );
-          
-          lead = createLeadResult.records[0].get('l').properties;
-          usedLeadId = newLeadId;
-          console.log('New lead created with ID:', usedLeadId);
+        if (checkResult.records.length > 0) {
+          existingLeadId = checkResult.records[0].get('l').properties.id;
+          console.log(`Found existing lead: ${existingLeadId}`);
         }
-      } else {
-        // Check if the provided leadId exists
-        const leadResult = await session.run(
-          'MATCH (l:Lead {id: $leadId}) RETURN l',
-          { leadId: usedLeadId }
-        );
-        
-        if (leadResult.records.length === 0) {
-          return res.status(404).json({ 
-            success: false, 
-            error: 'Lead not found',
-            message: 'Cannot schedule appointment for non-existent lead'
-          });
-        }
-        
-        lead = leadResult.records[0].get('l').properties;
       }
       
-      // Find the appointment to update
-      const findAppointmentResult = await session.run(
-        `MATCH (a:Appointment)
-         WHERE date(a.date) = date($date) AND a.time = $time AND a.status = 'available'
+      // Find the appointment by date/time
+      const findResult = await session.run(
+        `MATCH (a:Appointment {date: $date, time: $time}) 
          RETURN a`,
         { date, time }
       );
       
-      if (findAppointmentResult.records.length === 0) {
-        return res.status(404).json({ 
-          success: false, 
-          error: 'Appointment slot not found',
-          message: 'The requested appointment time was not found in the system or is not available'
+      if (findResult.records.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Appointment not found',
+          message: 'The requested appointment time is not available'
         });
       }
       
-      const appointmentId = findAppointmentResult.records[0].get('a').properties.id;
+      const appointmentId = findResult.records[0].get('a').properties.id;
+      console.log(`Found appointment: ${appointmentId}`);
       
-      // Update appointment and create relationship
-      const result = await session.run(
-        `MATCH (l:Lead {id: $leadId})
-         MATCH (a:Appointment {id: $appointmentId})
-         SET a.status = 'scheduled', 
-             a.leadName = l.name,
-             a.leadEmail = l.email,
-             a.leadPhone = l.phone,
+      // Update the appointment to booked status
+      const updateResult = await session.run(
+        `MATCH (a:Appointment {id: $appointmentId})
+         SET a.status = 'booked',
              a.updatedAt = datetime()
-         CREATE (l)-[r:HAS_APPOINTMENT {createdAt: datetime()}]->(a)
-         RETURN a, l`,
-        { leadId: usedLeadId, appointmentId }
+         RETURN a`,
+        { appointmentId }
       );
       
-      if (result.records.length === 0) {
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Failed to update appointment',
-          message: 'Could not update appointment status'
-        });
+      // If we have a lead, connect them to the appointment
+      if (existingLeadId) {
+        await session.run(
+          `MATCH (l:Lead {id: $leadId})
+           MATCH (a:Appointment {id: $appointmentId})
+           CREATE (l)-[r:HAS_APPOINTMENT]->(a)
+           RETURN l, r, a`,
+          { leadId: existingLeadId, appointmentId }
+        );
+        console.log(`Connected lead ${existingLeadId} to appointment ${appointmentId}`);
       }
       
-      const appointment = result.records[0].get('a').properties;
+      const updatedAppointment = updateResult.records[0].get('a').properties;
+      console.log(`Updated appointment to booked status: ${appointmentId}`);
       
-      // Send confirmation email
-      let emailSent = false;
-      try {
-        const emailTemplate = getEmailTemplate(lead, {
-          date: new Date(date).toLocaleDateString('en-US', {
+      // Send email confirmation
+      if (email) {
+        console.log(`Attempting to send email to: ${email}`);
+        try {
+          const { date: apptDate, time: apptTime } = updatedAppointment;
+          const formattedDate = new Date(apptDate).toLocaleDateString('en-US', {
             weekday: 'long',
             year: 'numeric',
             month: 'long',
             day: 'numeric'
-          }),
-          time: new Date(`2000-01-01T${time}`).toLocaleTimeString('en-US', {
+          });
+          const formattedTime = new Date(`2000-01-01T${apptTime}`).toLocaleTimeString('en-US', {
             hour: 'numeric',
             minute: '2-digit'
-          })
-        });
-        
-        const emailResult = await sendEmail(
-          lead.email,
-          'Appointment Confirmation',
-          emailTemplate.text,
-          emailTemplate.html
-        );
-        
-        emailSent = emailResult.success;
-        console.log('Email sending result:', emailResult);
-      } catch (emailError) {
-        console.error('Failed to send confirmation email:', emailError);
-        // Continue despite email error
+          });
+          
+          const subject = `Your appointment is confirmed for ${formattedDate}`;
+          const text = `Dear ${name},\n\nYour appointment with Miller House Studio is confirmed for ${formattedDate} at ${formattedTime}.\n\nService: ${service || 'Consultation'}\n\nThank you for choosing Miller House Studio. We look forward to meeting with you.\n\nBest regards,\nMiller House Studio Team`;
+          const html = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2>Your Appointment is Confirmed!</h2>
+              <p>Dear ${name},</p>
+              <p>Your appointment with Miller House Studio is confirmed for:</p>
+              <div style="background-color: #f0f8ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                <p style="font-size: 18px; font-weight: bold; margin: 5px 0;">${formattedDate} at ${formattedTime}</p>
+                <p style="margin: 5px 0;">Service: ${service || 'Consultation'}</p>
+              </div>
+              <p>Thank you for choosing Miller House Studio. We look forward to meeting with you.</p>
+              <p>Best regards,<br>Miller House Studio Team</p>
+            </div>
+          `;
+          
+          const emailResult = await sendEmail(email, subject, text, html);
+          console.log('Email sending result:', emailResult);
+        } catch (emailError) {
+          console.error('Error sending email:', emailError);
+          // Continue despite email error
+        }
       }
       
       return res.json({ 
         success: true, 
-        data: { 
-          appointment,
-          lead
-        },
-        emailSent,
+        data: updatedAppointment,
         message: 'Appointment scheduled successfully'
-      });
-    } catch (error) {
-      console.error('Error scheduling appointment:', error);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Failed to schedule appointment',
-        details: error.message
       });
     } finally {
       await session.close();
     }
   } catch (error) {
-    console.error('Error processing appointment request:', error);
+    console.error('Error booking appointment:', error);
     return res.status(500).json({ 
       success: false, 
-      error: 'Failed to process appointment request',
+      error: 'Failed to book appointment',
       details: error.message
     });
   }
@@ -849,6 +763,9 @@ app.post('/api/appointments', async (req, res) => {
 
 app.get('/api/appointments', async (req, res) => {
   try {
+    const { status = 'any', date = 'any' } = req.query;
+    console.log(`Fetching appointments with filters: status=${status}, date=${date}`);
+    
     if (!isConnected) {
       return res.status(503).json({ 
         success: false, 
@@ -857,12 +774,6 @@ app.get('/api/appointments', async (req, res) => {
       });
     }
     
-    // Allow filtering by status
-    const status = req.query.status;
-    const date = req.query.date;
-    
-    console.log(`Fetching appointments with filters: status=${status || 'any'}, date=${date || 'any'}`);
-    
     const session = driver.session({ database: dbName });
     try {
       let query = `
@@ -870,20 +781,22 @@ app.get('/api/appointments', async (req, res) => {
         OPTIONAL MATCH (l:Lead)-[r:HAS_APPOINTMENT]->(a)
       `;
       
-      // Add filters if provided
+      // Apply filters
       const params = {};
-      if (status) {
-        query += ` WHERE a.status = $status`;
+      const filters = [];
+      
+      if (status !== 'any') {
+        filters.push('a.status = $status');
         params.status = status;
       }
       
-      if (date) {
-        if (status) {
-          query += ` AND date(a.date) = date($date)`;
-        } else {
-          query += ` WHERE date(a.date) = date($date)`;
-        }
+      if (date !== 'any') {
+        filters.push('a.date = $date');
         params.date = date;
+      }
+      
+      if (filters.length > 0) {
+        query += `WHERE ${filters.join(' AND ')}`;
       }
       
       query += `
@@ -894,7 +807,6 @@ app.get('/api/appointments', async (req, res) => {
       
       console.log('Executing query:', query);
       const result = await session.run(query, params);
-      console.log(`Query returned ${result.records.length} records`);
       
       const appointmentsData = result.records.map(record => {
         const appointment = record.get('a').properties;
@@ -902,25 +814,7 @@ app.get('/api/appointments', async (req, res) => {
         
         // Format dates for frontend
         if (appointment.date && typeof appointment.date !== 'string') {
-          // Format date in a way JavaScript can parse
-          const dateObj = appointment.date;
-          if (dateObj.year && dateObj.month && dateObj.day) {
-            const year = dateObj.year.low || dateObj.year;
-            const month = (dateObj.month.low || dateObj.month);  // Neo4j months are 1-based
-            const day = dateObj.day.low || dateObj.day;
-            appointment.dateFormatted = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-          }
-          appointment.date = appointment.date.toString();
-        } else if (appointment.date && typeof appointment.date === 'string') {
-          // If it's already a string, try to extract a date format
-          try {
-            const date = new Date(appointment.date);
-            if (!isNaN(date)) {
-              appointment.dateFormatted = date.toISOString().split('T')[0];
-            }
-          } catch (e) {
-            console.warn(`Failed to parse date from string: ${appointment.date}`);
-          }
+          appointment.dateFormatted = appointment.date.toString();
         }
         
         if (appointment.createdAt && typeof appointment.createdAt !== 'string') {
@@ -931,26 +825,26 @@ app.get('/api/appointments', async (req, res) => {
           appointment.updatedAt = appointment.updatedAt.toString();
         }
         
-        // Include lead information if available
-        if (lead) {
-          if (lead.createdAt && typeof lead.createdAt !== 'string') {
-            lead.createdAt = lead.createdAt.toString();
-          }
-          if (lead.updatedAt && typeof lead.updatedAt !== 'string') {
-            lead.updatedAt = lead.updatedAt.toString();
-          }
-          
-          return {
-            ...appointment,
-            lead
-          };
-        }
-        
-        return appointment;
+        return {
+          ...appointment,
+          leadDetails: lead ? {
+            id: lead.id,
+            name: lead.name,
+            email: lead.email,
+            phone: lead.phone,
+            state: lead.state || '',
+            financingStatus: lead.financingStatus || ''
+          } : null
+        };
       });
       
-      console.log(`Returning ${appointmentsData.length} appointments with status ${status || 'any'}`);
-      return res.json({ success: true, data: appointmentsData });
+      console.log(`Query returned ${result.records.length} records`);
+      console.log(`Returning ${appointmentsData.length} appointments with status ${status}`);
+      
+      return res.json({ 
+        success: true, 
+        data: appointmentsData
+      });
     } finally {
       await session.close();
     }
@@ -959,7 +853,7 @@ app.get('/api/appointments', async (req, res) => {
     return res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch appointments',
-      details: error.message 
+      details: error.message
     });
   }
 });
