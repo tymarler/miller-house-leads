@@ -320,15 +320,36 @@ function App() {
     console.log('Selected time:', selectedTime);
 
     setSubmitting(true);
+    setError(''); // Clear any previous errors
+    
     try {
-      // Format date properly - use dateFormatted if available
-      const formattedDate = selectedDate.includes('T') 
-        ? selectedDate.split('T')[0]  // Extract date part from ISO string
-        : selectedDate;
+      // Handle both string date formats and dates with dateFormatted properties
+      let formattedDate;
+      
+      if (typeof selectedDate === 'object' && selectedDate.dateFormatted) {
+        formattedDate = selectedDate.dateFormatted;
+        console.log('Using dateFormatted property:', formattedDate);
+      } else if (typeof selectedDate === 'object' && selectedDate.date) {
+        formattedDate = selectedDate.date;
+        console.log('Using date property:', formattedDate);
+      } else if (selectedDate.includes && selectedDate.includes('T')) {
+        formattedDate = selectedDate.split('T')[0]; // Extract date part from ISO string
+        console.log('Extracted date from ISO string:', formattedDate);
+      } else {
+        formattedDate = selectedDate;
+        console.log('Using date as is:', formattedDate);
+      }
+      
+      // Handle formatted time if it's an object
+      let formattedTime = selectedTime;
+      if (typeof selectedTime === 'object') {
+        formattedTime = selectedTime.time || selectedTime.toString();
+        console.log('Extracted time from object:', formattedTime);
+      }
       
       console.log('Scheduling appointment with data:', {
         date: formattedDate,
-        time: selectedTime,
+        time: formattedTime,
         name: formData.name,
         email: formData.email,
         phone: formData.phone
@@ -336,7 +357,7 @@ function App() {
 
       const response = await axios.post(`${API_BASE_URL}/api/appointments`, {
         date: formattedDate,
-        time: selectedTime,
+        time: formattedTime,
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
@@ -347,16 +368,69 @@ function App() {
 
       if (response.data && response.data.success) {
         // Format the date nicely
-        const apptDate = new Date(formattedDate);
-        const displayDate = apptDate.toLocaleDateString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long', 
-          day: 'numeric'
-        });
+        let displayDate;
+        
+        // Handle different date formats coming from the server
+        try {
+          // First try to use the returned appointment data if available
+          if (response.data.data && response.data.data.date) {
+            const serverDate = response.data.data.date;
+            
+            if (typeof serverDate === 'object' && serverDate.year) {
+              // Handle Neo4j date object
+              const year = serverDate.year.low || serverDate.year;
+              const month = (serverDate.month.low || serverDate.month) - 1; // JS months are 0-based
+              const day = serverDate.day.low || serverDate.day;
+              
+              const jsDate = new Date(year, month, day);
+              displayDate = jsDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long', 
+                day: 'numeric'
+              });
+              console.log('Formatted Neo4j date object:', displayDate);
+            } else if (typeof serverDate === 'string') {
+              // Handle string date from server
+              const jsDate = new Date(serverDate);
+              if (!isNaN(jsDate.getTime())) {
+                displayDate = jsDate.toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long', 
+                  day: 'numeric'
+                });
+                console.log('Formatted string date from server:', displayDate);
+              }
+            }
+          }
+          
+          // Fallback to original date if server data didn't work
+          if (!displayDate) {
+            const apptDate = new Date(formattedDate);
+            if (!isNaN(apptDate.getTime())) {
+              displayDate = apptDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long', 
+                day: 'numeric'
+              });
+              console.log('Formatted using client date:', displayDate);
+            }
+          }
+          
+          // Last resort fallback
+          if (!displayDate) {
+            displayDate = formattedDate;
+            console.log('Using raw date as fallback:', displayDate);
+          }
+        } catch (dateError) {
+          console.error('Error formatting date:', dateError);
+          displayDate = formattedDate; // Use the raw date as fallback
+        }
         
         // Format the time nicely
-        const timeDisplay = new Date(`2000-01-01T${selectedTime}`).toLocaleTimeString('en-US', {
+        const timeDisplay = new Date(`2000-01-01T${formattedTime}`).toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit'
         });
@@ -425,8 +499,27 @@ function App() {
       }
     } catch (error) {
       console.error('Error scheduling appointment:', error);
-      console.error('Error details:', error.response?.data || 'No response data');
-      setError(error.response?.data?.error || 'Failed to schedule appointment. Please try again.');
+      
+      // Enhanced error reporting
+      console.log('Error type:', error.name);
+      console.log('Error message:', error.message);
+      
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        console.log('Error status:', error.response.status);
+        console.log('Error data:', error.response.data);
+        console.log('Error headers:', error.response.headers);
+        setError(error.response.data?.error || error.response.data?.message || 'Failed to schedule appointment. Please try again.');
+      } else if (error.request) {
+        // The request was made but no response was received
+        console.log('Error request:', error.request);
+        setError('No response received from server. Please try again later.');
+      } else {
+        // Something happened in setting up the request that triggered an Error
+        console.log('Error config:', error.config);
+        setError('Error preparing request. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }

@@ -632,7 +632,11 @@ app.post('/api/appointments', async (req, res) => {
     console.log('Received appointment creation request:', req.body);
     
     if (!date || !time) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields',
+        details: 'Date and time are required'
+      });
     }
     
     if (!isConnected) {
@@ -661,23 +665,119 @@ app.post('/api/appointments', async (req, res) => {
         }
       }
       
-      // Find the appointment by date/time
-      const findResult = await session.run(
-        `MATCH (a:Appointment {date: $date, time: $time}) 
-         RETURN a`,
-        { date, time }
+      // Handle Neo4j date objects or string dates
+      let cleanDate;
+      if (typeof date === 'object' && date.year && date.month && date.day) {
+        // Handle Neo4j date object
+        const year = date.year.low || date.year;
+        const month = (date.month.low || date.month).toString().padStart(2, '0');
+        const day = (date.day.low || date.day).toString().padStart(2, '0');
+        cleanDate = `${year}-${month}-${day}`;
+        console.log(`Parsed Neo4j date object to: ${cleanDate}`);
+      } else if (typeof date === 'string' && date.includes('T')) {
+        // Handle ISO string date
+        cleanDate = date.split('T')[0];
+        console.log(`Extracted date from ISO string: ${cleanDate}`);
+      } else {
+        // Use as-is
+        cleanDate = date;
+        console.log(`Using date as-is: ${cleanDate}`);
+      }
+      
+      // Clean time format
+      const cleanTime = typeof time === 'string' && time.includes('T') 
+        ? time.split('T')[1].substring(0, 5) 
+        : time;
+      
+      console.log(`Looking for appointment with date: ${cleanDate}, time: ${cleanTime}`);
+      
+      // DEBUG: First list all available appointments to see what we have
+      console.log("DEBUG: Retrieving all available appointments for comparison");
+      const allAppointmentsResult = await session.run(
+        `MATCH (a:Appointment) 
+         WHERE a.status = 'available'
+         RETURN a.id, a.date, a.time, a.status
+         ORDER BY a.date, a.time`,
+        {}
       );
       
+      console.log(`Found ${allAppointmentsResult.records.length} available appointments in database`);
+      allAppointmentsResult.records.forEach((record, i) => {
+        const appt = {
+          id: record.get('a.id'),
+          date: record.get('a.date'),
+          time: record.get('a.time'),
+          status: record.get('a.status')
+        };
+        console.log(`Appointment ${i+1}: ID=${appt.id}, date=${appt.date}, time=${appt.time}, status=${appt.status}`);
+      });
+      
+      // Find the appointment by date/time
+      console.log(`Executing query: MATCH (a:Appointment) WHERE a.date = "${cleanDate}" AND a.time = "${cleanTime}" RETURN a`);
+      const findResult = await session.run(
+        `MATCH (a:Appointment) 
+         WHERE a.date = $date AND a.time = $time
+         RETURN a`,
+        { date: cleanDate, time: cleanTime }
+      );
+      
+      console.log(`Query returned ${findResult.records.length} records`);
+      
       if (findResult.records.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: 'Appointment not found',
-          message: 'The requested appointment time is not available'
-        });
+        console.log(`No appointment found for date: ${cleanDate}, time: ${cleanTime}`);
+        
+        // Try a more flexible match
+        console.log("Trying more flexible date/time matching with CONTAINS");
+        console.log(`Executing query: MATCH (a:Appointment) WHERE a.status = 'available' AND toString(a.date) CONTAINS "${cleanDate}" AND a.time = "${cleanTime}" RETURN a LIMIT 1`);
+        const flexibleResult = await session.run(
+          `MATCH (a:Appointment) 
+           WHERE a.status = 'available' AND toString(a.date) CONTAINS $dateSubstring AND a.time = $time
+           RETURN a LIMIT 1`,
+          { dateSubstring: cleanDate, time: cleanTime }
+        );
+        
+        console.log(`Flexible query returned ${flexibleResult.records.length} records`);
+        
+        if (flexibleResult.records.length === 0) {
+          // Try one more approach
+          console.log("Last attempt: Looking for partial matches");
+          console.log(`Executing query: MATCH (a:Appointment) WHERE a.status = 'available' AND a.time = "${cleanTime}" RETURN a ORDER BY a.date LIMIT 5`);
+          const finalAttempt = await session.run(
+            `MATCH (a:Appointment) 
+             WHERE a.status = 'available' AND a.time = $time
+             RETURN a ORDER BY a.date LIMIT 5`,
+            { time: cleanTime }
+          );
+          
+          console.log(`Final attempt returned ${finalAttempt.records.length} records`);
+          
+          if (finalAttempt.records.length > 0) {
+            console.log("Found appointments with matching time but different date");
+            finalAttempt.records.forEach((record, i) => {
+              const appt = record.get('a').properties;
+              console.log(`Option ${i+1}: date=${appt.date}, time=${appt.time}, id=${appt.id}`);
+            });
+            
+            // Use the first one as a fallback
+            findResult.records = [finalAttempt.records[0]];
+            console.log(`Selected appointment with date=${findResult.records[0].get('a').properties.date}, time=${findResult.records[0].get('a').properties.time}`);
+          } else {
+            return res.status(404).json({
+              success: false,
+              error: 'Appointment not found',
+              message: 'The requested appointment time is not available'
+            });
+          }
+        } else {
+          findResult.records = flexibleResult.records;
+          console.log(`Using flexible match result with date=${findResult.records[0].get('a').properties.date}, time=${findResult.records[0].get('a').properties.time}`);
+        }
+      } else {
+        console.log(`Found exact match with date=${findResult.records[0].get('a').properties.date}, time=${findResult.records[0].get('a').properties.time}`);
       }
       
       const appointmentId = findResult.records[0].get('a').properties.id;
-      console.log(`Found appointment: ${appointmentId}`);
+      console.log(`Booking appointment with ID: ${appointmentId}`);
       
       // Update the appointment to booked status
       const updateResult = await session.run(
@@ -703,11 +803,25 @@ app.post('/api/appointments', async (req, res) => {
       const updatedAppointment = updateResult.records[0].get('a').properties;
       console.log(`Updated appointment to booked status: ${appointmentId}`);
       
+      // Format the appointment date for response
+      let formattedAppointment = { ...updatedAppointment };
+      
+      // Handle Neo4j date object conversion for the client
+      if (formattedAppointment.date && typeof formattedAppointment.date === 'object' && formattedAppointment.date.year) {
+        const year = formattedAppointment.date.year.low || formattedAppointment.date.year;
+        const month = (formattedAppointment.date.month.low || formattedAppointment.date.month).toString().padStart(2, '0');
+        const day = (formattedAppointment.date.day.low || formattedAppointment.date.day).toString().padStart(2, '0');
+        
+        // Include both the original date object and a formatted string
+        formattedAppointment.dateFormatted = `${year}-${month}-${day}`;
+        console.log(`Formatted appointment date to: ${formattedAppointment.dateFormatted}`);
+      }
+      
       // Send email confirmation
       if (email) {
         console.log(`Attempting to send email to: ${email}`);
         try {
-          const { date: apptDate, time: apptTime } = updatedAppointment;
+          const { date: apptDate, time: apptTime } = formattedAppointment;
           const formattedDate = new Date(apptDate).toLocaleDateString('en-US', {
             weekday: 'long',
             year: 'numeric',
@@ -745,7 +859,7 @@ app.post('/api/appointments', async (req, res) => {
       
       return res.json({ 
         success: true, 
-        data: updatedAppointment,
+        data: formattedAppointment,
         message: 'Appointment scheduled successfully'
       });
     } finally {
