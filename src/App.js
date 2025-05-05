@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { Link, Routes, Route, useLocation } from 'react-router-dom';
 import About from './pages/About';
@@ -142,10 +142,7 @@ function App() {
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [costs, setCosts] = useState(null);
-  const [showScheduling, setShowScheduling] = useState(false);
-  const [isRescheduling, setIsRescheduling] = useState(false);
-  const [showFilterForm, setShowFilterForm] = useState(false);
-  const [success, setSuccess] = useState('');
+  const [success, setSuccess] = useState(null);
 
   const getQualificationStatus = (score) => {
     if (score >= 25) {
@@ -172,38 +169,70 @@ function App() {
     }
   };
 
-  const getQualificationScore = () => {
+  const getQualificationScore = useCallback(() => {
     let score = 0;
-    
-    // Financing Status
     if (formData.financingStatus === 'Ready to proceed') score += 15;
     else if (formData.financingStatus === 'Pre-approved') score += 10;
     else if (formData.financingStatus === 'In process') score += 5;
-    
     return score;
-  };
+  }, [formData.financingStatus]);
 
-  const calculateCost = () => {
+  const calculateCost = useCallback(() => {
     if (!formData.state || !formData.squareFootage) return null;
-    
     const stateRange = stateCostRanges[formData.state];
     const sqft = parseFloat(formData.squareFootage);
-    
     const lowCost = stateRange.min * sqft;
     const highCost = stateRange.max * sqft;
     const averageCost = (lowCost + highCost) / 2;
-    
     return {
       low: Math.round(lowCost),
       average: Math.round(averageCost),
       high: Math.round(highCost)
     };
-  };
+  }, [formData.state, formData.squareFootage]);
+
+  const fetchAvailableAppointments = useCallback(async () => {
+    try {
+      console.log("Fetching available appointments...");
+      const response = await axios.get(`${API_BASE_URL}/api/appointments?status=available`);
+      console.log("Appointments response:", response.data);
+      
+      if (!response.data || !response.data.success) {
+        throw new Error('Invalid response from server');
+      }
+      
+      const appointments = response.data.data || [];
+      console.log("Available appointments:", appointments);
+      
+      const formattedAppointments = appointments.map(appointment => ({
+        ...appointment,
+        date: typeof appointment.date === 'object' && appointment.date.year
+          ? new Date(
+              appointment.date.year.low || appointment.date.year,
+              (appointment.date.month.low || appointment.date.month) - 1,
+              appointment.date.day.low || appointment.date.day
+            ).toISOString().split('T')[0]
+          : appointment.date
+      }));
+      
+      if (formattedAppointments.length === 0) {
+        setError('No available appointments found. Please try again later.');
+      } else {
+        setError('');
+      }
+      
+      setAvailableAppointments(formattedAppointments);
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      setError('Error checking appointment availability. Please try again.');
+      setAvailableAppointments([]);
+    }
+  }, []);
 
   useEffect(() => {
     const score = getQualificationScore();
     setQualificationScore(score);
-  }, [formData.financingStatus, getQualificationScore]);
+  }, [getQualificationScore]);
 
   useEffect(() => {
     if (formData.state && formData.squareFootage) {
@@ -225,128 +254,89 @@ function App() {
   };
 
   const handleInputChange = async (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    if (!e || !e.target) {
+      console.error('Invalid event object:', e);
+      return;
+    }
 
+    const { name, value } = e.target;
+    if (!name || typeof name !== 'string') {
+      console.error('Invalid input name:', name);
+      return;
+    }
+
+    if (value === undefined || value === null) {
+      console.error('Invalid input value:', value);
+      return;
+    }
+
+    setFormData(prev => {
+      if (!prev || typeof prev !== 'object') {
+        console.error('Invalid formData state:', prev);
+        return { [name]: value };
+      }
+      return { ...prev, [name]: value };
+    });
+    
     // Check for existing appointments when email is entered
     if (name === 'email' && value) {
       try {
+        // Make API request to check appointments
         const response = await axios.get(`${API_BASE_URL}/api/appointments`);
-        console.log("Appointments response:", response.data);
         
-        if (!response.data || !response.data.success) {
-          throw new Error('Invalid response from server');
+        // Log the full response for debugging
+        console.log('Full server response:', JSON.stringify(response.data, null, 2));
+        
+        // Validate the response structure
+        if (!response || !response.data) {
+          console.error('Invalid response:', response);
+          setError('Error checking appointments. Please try again.');
+          return;
         }
 
-        const appointments = response.data.data || [];
-        
-        if (!Array.isArray(appointments)) {
-          throw new Error('Invalid appointments data format');
+        if (!response.data.success) {
+          console.error('Response indicates failure:', response.data);
+          setError('Error checking appointments. Please try again.');
+          return;
         }
-        
-        // Check if user already has an appointment
-        const existingAppointment = appointments.find(apt => {
-          // If there's no lead property, this appointment is available
-          if (!apt.lead) {
+
+        // Extract appointments from response
+        const appointments = response.data.data;
+        if (!Array.isArray(appointments)) {
+          console.error('Appointments is not an array:', appointments);
+          setError('Error checking appointments. Please try again.');
+          return;
+        }
+
+        // Check for existing appointment
+        const hasExistingAppointment = appointments.some(appointment => {
+          // Log each appointment for debugging
+          console.log('Checking appointment:', appointment);
+          
+          // Check if appointment has lead data
+          if (!appointment || !appointment.l) {
             return false;
           }
-          return apt.lead.email === value;
+
+          // Check if lead has email
+          if (!appointment.l.email) {
+            return false;
+          }
+
+          // Compare emails (case-insensitive)
+          return appointment.l.email.toLowerCase() === value.toLowerCase();
         });
 
-        if (existingAppointment) {
-          setError(
-            <div>
-              <p>You already have an appointment scheduled for {new Date(existingAppointment.date).toLocaleDateString()} at {existingAppointment.time}.</p>
-              <p>Would you like to reschedule?</p>
-              <div className="mt-4 flex gap-4">
-                <button
-                  onClick={() => {
-                    setError('');
-                    setCurrentStep(2);
-                    if (showModal) {
-                      setShowModal(false);
-                    }
-                  }}
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
-                >
-                  Yes, Reschedule
-                </button>
-                <button
-                  onClick={() => {
-                    setError('');
-                    handleContactClick();
-                  }}
-                  className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded"
-                >
-                  No, Contact Support
-                </button>
-              </div>
-            </div>
-          );
+        if (hasExistingAppointment) {
+          setError('You already have an appointment scheduled. Please contact support to reschedule.');
+          setShowModal(false);
         } else {
-          setError('');
+          setError(''); // Clear any previous errors
         }
       } catch (error) {
         console.error('Error checking appointments:', error);
         setError('Error checking appointment availability. Please try again.');
       }
-    }
-  };
-
-  const handleNextStep = () => {
-    if (currentStep === 1) {
-      if (!formData.name || !formData.email || !formData.phone || !formData.state) {
-        setError('Please fill in all required fields');
-        return;
-      }
-    }
-    setCurrentStep(prev => prev + 1);
-    setError('');
-  };
-
-  const handleDateSelect = (date) => {
-    setSelectedDate(date);
-    setFormData(prev => ({ ...prev, appointmentDate: date }));
-  };
-
-  const handleTimeSelect = (time) => {
-    setSelectedTime(time);
-    setFormData(prev => ({ ...prev, appointmentTime: time }));
-  };
-
-  const handleQualificationSubmit = async () => {
-    try {
-      const status = getQualificationStatus(qualificationScore);
-      
-      // Save lead data to the server
-      const response = await axios.post(`${API_BASE_URL}/api/leads`, {
-        ...formData,
-        qualificationScore,
-        status: status.status,
-        emailSubject: status.emailSubject,
-        emailBody: status.emailBody
-      });
-
-      if (response.data.success) {
-        if (qualificationScore >= 25) { // Medium or High priority
-          setShowScheduler(true);
-          setShowModal(false);
-          fetchAvailableAppointments();
-        } else {
-          setSuccess(status.message);
-          setShowSuccessMessage(true);
-          setSuccessMessage(status.message);
-          setShowModal(false);
-        }
-      } else {
-        setError('Failed to submit form. Please try again.');
-      }
-    } catch (err) {
-      console.error('Error saving lead data:', err);
-      setError('An error occurred. Please try again.');
     }
   };
 
@@ -365,9 +355,13 @@ function App() {
       let formattedDate = selectedDate;
       if (typeof selectedDate === 'object' && selectedDate.year) {
         const year = selectedDate.year.low || selectedDate.year;
-        const month = (selectedDate.month.low || selectedDate.month) - 1;
-        const day = selectedDate.day.low || selectedDate.day;
-        formattedDate = new Date(year, month, day).toISOString().split('T')[0];
+        const month = (selectedDate.month.low || selectedDate.month).toString().padStart(2, '0');
+        const day = (selectedDate.day.low || selectedDate.day).toString().padStart(2, '0');
+        formattedDate = `${year}-${month}-${day}`;
+      } else if (typeof selectedDate === 'string' && selectedDate.includes('/')) {
+        // Handle MM/DD/YYYY format
+        const parts = selectedDate.split('/');
+        formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
       }
       
       const response = await axios.post(`${API_BASE_URL}/api/appointments`, {
@@ -429,14 +423,27 @@ function App() {
   };
 
   const handlePersonalInfoSubmit = async (event) => {
+    if (!event || typeof event.preventDefault !== 'function') {
+      console.error('Invalid event object:', event);
+      return;
+    }
     event.preventDefault();
     
-    // Determine if the form is in a modal by checking if showModal is true
-    const isFromModal = showModal;
+    // Validate formData
+    if (!formData || typeof formData !== 'object') {
+      console.error('Invalid formData:', formData);
+      setError('Invalid form data. Please try again.');
+      return;
+    }
     
     // Validate all required fields
     const requiredFields = ['name', 'email', 'phone', 'state', 'squareFootage', 'financingStatus'];
-    const missingFields = requiredFields.filter(field => !formData[field]);
+    const missingFields = requiredFields.filter(field => {
+      if (!formData[field] || typeof formData[field] !== 'string') {
+        return true;
+      }
+      return false;
+    });
     
     if (missingFields.length > 0) {
       setError(`Please complete all required fields: ${missingFields.join(', ')}`);
@@ -451,7 +458,8 @@ function App() {
     }
 
     // Validate phone number (basic check for length)
-    if (formData.phone.replace(/\D/g, '').length < 10) {
+    const phoneNumber = formData.phone.replace(/\D/g, '');
+    if (phoneNumber.length < 10) {
       setError('Please enter a valid phone number');
       return;
     }
@@ -459,189 +467,29 @@ function App() {
     try {
       console.log("Form submitted successfully");
       
-      // If no existing appointment, proceed to next step
+      // Validate state before proceeding
+      if (!formData.state || typeof formData.state !== 'string') {
+        setError('Invalid state selection');
+        return;
+      }
+
+      // Validate square footage
+      const squareFootage = parseInt(formData.squareFootage);
+      if (isNaN(squareFootage) || squareFootage <= 0) {
+        setError('Please enter a valid square footage');
+        return;
+      }
+
+      // Proceed to next step
       setCurrentStep(2);
       setShowScheduler(true);
       
-      if (isFromModal) {
+      if (showModal) {
         setShowModal(false);
       }
     } catch (error) {
       console.error('Error submitting form:', error);
       setError('Error submitting form. Please try again.');
-    }
-  };
-
-  const handleCostSubmit = () => {
-    setCurrentStep(3);
-  };
-
-  const handleLocationSubmit = async (e) => {
-    e.preventDefault();
-    
-    try {
-      const qualificationScore = getQualificationScore();
-      const leadData = {
-        ...formData,
-        qualificationScore,
-        squareFootage: parseInt(formData.squareFootage)
-      };
-
-      const response = await axios.post(`${API_BASE_URL}/api/leads`, leadData);
-      
-      if (response.data.success) {
-        // Show scheduling section immediately
-        setShowScheduler(true);
-        setCurrentStep('scheduling');
-        // Fetch available appointments
-        fetchAvailableAppointments();
-      } else {
-        alert('Error saving lead data. Please try again.');
-      }
-    } catch (error) {
-      console.error('Error saving lead:', error);
-      alert('Error saving lead data. Please try again.');
-    }
-  };
-
-  const handleScheduleLater = async () => {
-    try {
-      const score = getQualificationScore();
-      const status = getQualificationStatus(score);
-      
-      const response = await axios.post(`${API_BASE_URL}/api/leads`, {
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
-        state: formData.state,
-        squareFootage: formData.squareFootage,
-        financingStatus: formData.financingStatus,
-        timeline: formData.timeline,
-        lotStatus: formData.lotStatus,
-        qualificationScore: score,
-        status: status.status,
-        emailSubject: status.emailSubject,
-        emailBody: status.emailBody
-      });
-
-      if (response.data.success) {
-        setShowScheduler(false);
-        setSuccess(status.message);
-        setShowSuccessMessage(true);
-        setSuccessMessage(status.message);
-        setFormData({
-          name: '',
-          email: '',
-          phone: '',
-          state: '',
-          squareFootage: '',
-          financingStatus: '',
-          timeline: '',
-          lotStatus: '',
-          score: 0
-        });
-      }
-    } catch (error) {
-      setError('Error saving lead data. Please try again.');
-    }
-  };
-
-  const fetchAvailableAppointments = async () => {
-    try {
-      console.log("Fetching available appointments...");
-      const response = await axios.get(`${API_BASE_URL}/api/appointments?status=available`);
-      console.log("Appointments response:", response.data);
-      
-      if (!response.data || !response.data.success) {
-        throw new Error('Invalid response from server');
-      }
-      
-      const appointments = response.data.data || [];
-      console.log("Available appointments:", appointments);
-      
-      // Format the appointments data
-      const formattedAppointments = appointments.map(appointment => ({
-        ...appointment,
-        date: typeof appointment.date === 'object' && appointment.date.year
-          ? new Date(
-              appointment.date.year.low || appointment.date.year,
-              (appointment.date.month.low || appointment.date.month) - 1,
-              appointment.date.day.low || appointment.date.day
-            ).toISOString().split('T')[0]
-          : appointment.date
-      }));
-      
-      if (formattedAppointments.length === 0) {
-        setError('No available appointments found. Please try again later.');
-      } else {
-        setError('');
-      }
-      
-      setAvailableAppointments(formattedAppointments);
-    } catch (error) {
-      console.error('Error fetching appointments:', error);
-      setError('Error checking appointment availability. Please try again.');
-      setAvailableAppointments([]);
-    }
-  };
-
-  const handleRescheduleClick = () => {
-    setShowScheduling(true);
-    setIsRescheduling(true);
-    // Fetch available appointments immediately
-    fetchAvailableAppointments();
-  };
-
-  const handleScheduleClick = () => {
-    setShowScheduler(true);
-    setShowFilterForm(false);
-  };
-
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      email: '',
-      phone: '',
-      state: '',
-      squareFootage: '',
-      financingStatus: '',
-      timeline: '',
-      lotStatus: '',
-      score: 0
-    });
-    setCurrentStep(1);
-    setError('');
-    setSuccess('');
-    setSelectedDate('');
-    setSelectedTime('');
-    setShowScheduler(false);
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSubmitting(true);
-    try {
-      const response = await axios.post(`${API_BASE_URL}/api/submit-form`, formData);
-      setSuccess('Form submitted successfully!');
-      setShowModal(false);
-    } catch (err) {
-      setError('Error submitting form. Please try again.');
-    }
-    setSubmitting(false);
-  };
-
-  const getEmailMessage = (status) => {
-    switch (status) {
-      case 'checking':
-        return 'Checking email availability...';
-      case 'available':
-        return 'Email is available';
-      case 'unavailable':
-        return 'Email is already registered';
-      case 'error':
-        return 'Error checking email availability';
-      default:
-        return '';
     }
   };
 
@@ -660,74 +508,6 @@ function App() {
       setError('An error occurred. Please try again.');
     }
     setSubmitting(false);
-  };
-
-  const FilterForm = () => (
-    <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-lg">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Project Qualification</h2>
-      <form onSubmit={handleFilterSubmit} className="space-y-6">
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Timeline</label>
-          <select
-            value={formData.timeline}
-            onChange={(e) => setFormData({...formData, timeline: e.target.value})}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-            required
-          >
-            <option value="">Select timeline</option>
-            <option value="Immediate">Immediate</option>
-            <option value="3-6 months">3-6 months</option>
-            <option value="6-12 months">6-12 months</option>
-            <option value="Just exploring">Just exploring</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Financing Status</label>
-          <select
-            value={formData.financingStatus}
-            onChange={(e) => setFormData({...formData, financingStatus: e.target.value})}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-            required
-          >
-            <option value="">Select financing status</option>
-            <option value="Ready to proceed">Ready to proceed</option>
-            <option value="Pre-approved">Pre-approved</option>
-            <option value="In process">In process</option>
-            <option value="Not started">Not started</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Lot Status</label>
-          <select
-            value={formData.lotStatus}
-            onChange={(e) => setFormData({...formData, lotStatus: e.target.value})}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-            required
-          >
-            <option value="">Select lot status</option>
-            <option value="Owned">Owned</option>
-            <option value="Under contract">Under contract</option>
-            <option value="Looking">Looking</option>
-            <option value="Not started">Not started</option>
-          </select>
-        </div>
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-        >
-          {submitting ? 'Submitting...' : 'Submit'}
-        </button>
-      </form>
-    </div>
-  );
-
-  const handlePrevStep = () => {
-    setCurrentStep(prev => prev - 1);
-    setError('');
   };
 
   return (
@@ -1034,17 +814,36 @@ function App() {
                         }`}
                         onClick={() => {
                           console.log("Selected appointment:", appointment);
-                          setSelectedDate(appointment.date);
+                          // Handle Neo4j datetime object
+                          let appointmentDate = appointment.date;
+                          if (typeof appointmentDate === 'object' && appointmentDate.year) {
+                            const year = appointmentDate.year.low || appointmentDate.year;
+                            const month = (appointmentDate.month.low || appointmentDate.month).toString().padStart(2, '0');
+                            const day = (appointmentDate.day.low || appointmentDate.day).toString().padStart(2, '0');
+                            appointmentDate = `${year}-${month}-${day}`;
+                          }
+                          setSelectedDate(appointmentDate);
                           setSelectedTime(appointment.time);
                         }}
                       >
                         <div className="font-medium">
-                          {new Date(appointment.date).toLocaleDateString('en-US', {
-                            weekday: 'long',
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                          })}
+                          {typeof appointment.date === 'object' && appointment.date.year ? 
+                            new Date(
+                              appointment.date.year.low || appointment.date.year,
+                              (appointment.date.month.low || appointment.date.month) - 1,
+                              appointment.date.day.low || appointment.date.day
+                            ).toLocaleDateString('en-US', {
+                              weekday: 'long',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric',
+                            })
+                            : new Date(appointment.date).toLocaleDateString('en-US', {
+                              weekday: 'long',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric',
+                            })}
                         </div>
                         <div className="text-gray-600">
                           {appointment.time}

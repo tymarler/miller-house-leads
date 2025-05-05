@@ -1364,82 +1364,46 @@ app.post('/api/salesmen/:id/availability', async (req, res) => {
 // API endpoint for getting appointments
 app.get('/api/appointments', async (req, res) => {
   try {
-    const { status, date } = req.query;
-    console.log(`Fetching appointments with filters: status=${status || 'any'}, date=${date || 'any'}`);
-    
-    if (!isConnected) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Database not connected',
-        message: 'Cannot retrieve appointments without database connection'
-      });
-    }
-    
-    const session = driver.session({ database: dbName });
-    try {
-      let query = `
+    const result = await executeWithSession(async (session) => {
+      const query = `
         MATCH (a:Appointment)
-        ${status ? 'WHERE a.status = $status' : ''}
         OPTIONAL MATCH (l:Lead)-[r:HAS_APPOINTMENT]->(a)
         OPTIONAL MATCH (s:Salesman)-[:OFFERS_APPOINTMENT]->(a)
         WITH a, l, s
         ORDER BY a.date, a.time
         RETURN a, l, s
       `;
-      
-      console.log("Executing query:", query, "with params:", status ? { status } : {});
-      
-      const result = await session.run(query, status ? { status } : {});
-      console.log(`Query returned ${result.records.length} records`);
-      
-      const appointments = result.records.map(record => {
+      const result = await session.run(query);
+      return result.records.map(record => {
         const appointment = record.get('a').properties;
         const lead = record.get('l') ? record.get('l').properties : null;
         const salesman = record.get('s') ? record.get('s').properties : null;
         
-        // Format dates for frontend
-        if (appointment.date && typeof appointment.date !== 'string') {
-          appointment.date = appointment.date.toString();
+        // Format Neo4j datetime object
+        if (appointment.date && typeof appointment.date === 'object') {
+          const year = appointment.date.year.low || appointment.date.year;
+          const month = (appointment.date.month.low || appointment.date.month).toString().padStart(2, '0');
+          const day = (appointment.date.day.low || appointment.date.day).toString().padStart(2, '0');
+          appointment.date = `${year}-${month}-${day}`;
         }
         
-        if (appointment.createdAt && typeof appointment.createdAt !== 'string') {
-          appointment.createdAt = appointment.createdAt.toString();
-        }
-        
-        if (appointment.updatedAt && typeof appointment.updatedAt !== 'string') {
-          appointment.updatedAt = appointment.updatedAt.toString();
-        }
-        
-        // Add lead info if available
-        if (lead) {
-          appointment.lead = lead;
-          appointment.leadId = lead.id;
-        }
-        
-        // Add salesman info if available
-        if (salesman) {
-          appointment.salesman = salesman;
-          appointment.salesmanId = salesman.id;
-        }
-        
-        return appointment;
+        return {
+          a: appointment,
+          l: lead,
+          s: salesman
+        };
       });
-      
-      console.log(`Returning ${appointments.length} appointments`);
-      
-      return res.json({ 
-        success: true, 
-        data: appointments
-      });
-    } finally {
-      await session.close();
-    }
+    });
+
+    res.json({
+      success: true,
+      data: result
+    });
   } catch (error) {
     console.error('Error fetching appointments:', error);
-    return res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch appointments',
-      message: error.message
+    res.status(500).json({
+      success: false,
+      error: 'Error fetching appointments'
     });
   }
 });
@@ -1995,7 +1959,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', neo4j: isConnected });
 });
 
-// And finally, the catch-all route for the React app
+// Handle React routing, return all requests to React app
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'build', 'index.html'));
 });
