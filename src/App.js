@@ -1,19 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { HomeIcon, PhoneIcon } from '@heroicons/react/24/outline';
-import classNames from 'classnames';
-import Gallery from './pages/Gallery';
-import { Link, Routes, Route } from 'react-router-dom';
-import { BrowserRouter as Router } from 'react-router-dom';
+import { Link, Routes, Route, useLocation } from 'react-router-dom';
 import About from './pages/About';
 import PhotoGallery from './pages/PhotoGallery';
 import VideoGallery from './pages/VideoGallery';
-import { PhotoIcon, VideoCameraIcon, UserGroupIcon, DocumentTextIcon, HomeModernIcon } from '@heroicons/react/24/outline';
 import Admin from './pages/Admin';
-import TestAPI from './pages/TestAPI';
-import DebugAPI from './pages/DebugAPI';
-import HousePlans from './pages/HousePlans';
-import DTSVideos from './pages/DTSVideos';
+import SalesmanDashboard from './pages/SalesmanDashboard';
 import API_BASE_URL from './config';
 
 // Cost per square foot ranges by state
@@ -125,6 +117,9 @@ const stateExplanations = {
 };
 
 function App() {
+  console.log("App component rendering");
+  
+  const location = useLocation();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
     name: '',
@@ -132,44 +127,58 @@ function App() {
     phone: '',
     state: '',
     squareFootage: '',
-    financingStatus: ''
+    financingStatus: '',
+    timeline: '',
+    lotStatus: ''
   });
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   const [qualificationScore, setQualificationScore] = useState(0);
-  const [showFilterForm, setShowFilterForm] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
   const [availableAppointments, setAvailableAppointments] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState('');
-  const [schedulingStatus, setSchedulingStatus] = useState('');
-  const [showFilter, setShowFilter] = useState(false);
-  const [showScheduling, setShowScheduling] = useState(false);
-  const [isRescheduling, setIsRescheduling] = useState(false);
-  const [activeSection, setActiveSection] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-  const [selectedAppointment, setSelectedAppointment] = useState(null);
-  const [existingAppointment, setExistingAppointment] = useState(null);
-  const [emailCheckStatus, setEmailCheckStatus] = useState(null);
   const [costs, setCosts] = useState(null);
-  const [formError, setFormError] = useState('');
+  const [showScheduling, setShowScheduling] = useState(false);
+  const [isRescheduling, setIsRescheduling] = useState(false);
+  const [showFilterForm, setShowFilterForm] = useState(false);
+  const [success, setSuccess] = useState('');
+
+  const getQualificationStatus = (score) => {
+    if (score >= 25) {
+      return {
+        status: 'High',
+        message: 'You are a high priority lead!',
+        emailSubject: 'High Priority Lead - Immediate Follow-up Required',
+        emailBody: 'This lead has been identified as high priority. Please contact them immediately.'
+      };
+    } else if (score >= 15) {
+      return {
+        status: 'Medium',
+        message: 'You are a medium priority lead.',
+        emailSubject: 'Medium Priority Lead - Follow-up Required',
+        emailBody: 'This lead has been identified as medium priority. Please follow up within 24 hours.'
+      };
+    } else {
+      return {
+        status: 'Low',
+        message: 'You are a low priority lead.',
+        emailSubject: 'Low Priority Lead - Follow-up Required',
+        emailBody: 'This lead has been identified as low priority. Please follow up within 48 hours.'
+      };
+    }
+  };
 
   const getQualificationScore = () => {
     let score = 0;
     
-    // Score based on financing status
-    if (formData.financingStatus === 'Building with cash') {
-      score += 15;
-    } else if (formData.financingStatus === 'Financing arranged') {
-      score += 10;
-    } else if (formData.financingStatus === 'Pre Approved') {
-      score += 5;
-    }
-    // "Not ready" gets 0 points
+    // Financing Status
+    if (formData.financingStatus === 'Ready to proceed') score += 15;
+    else if (formData.financingStatus === 'Pre-approved') score += 10;
+    else if (formData.financingStatus === 'In process') score += 5;
     
     return score;
   };
@@ -194,7 +203,7 @@ function App() {
   useEffect(() => {
     const score = getQualificationScore();
     setQualificationScore(score);
-  }, [formData]);
+  }, [formData.financingStatus, getQualificationScore]);
 
   useEffect(() => {
     if (formData.state && formData.squareFootage) {
@@ -203,51 +212,88 @@ function App() {
     } else {
       setCosts(null);
     }
-  }, [formData.state, formData.squareFootage]);
+  }, [formData.state, formData.squareFootage, calculateCost]);
 
   useEffect(() => {
     if (showScheduler) {
       fetchAvailableAppointments();
     }
-  }, [showScheduler]);
+  }, [showScheduler, fetchAvailableAppointments]);
 
-  const getQualificationStatus = (score) => {
-    if (score >= 40) {
-      return {
-        status: 'High Priority',
-        message: 'We will contact you within 24 hours to schedule your consultation.',
-        color: 'text-green-600',
-        shouldSchedule: true,
-        emailSubject: 'High Priority: Schedule Your Consultation with Miller House Studio',
-        emailBody: 'Thank you for your interest in Miller House Studio. Based on your responses, you are a high priority lead. We will contact you within 24 hours to schedule your consultation. In the meantime, feel free to browse our portfolio at our website.'
-      };
-    } else if (score >= 25) {
-      return {
-        status: 'Medium Priority',
-        message: 'We will contact you within 48 hours to discuss your project.',
-        color: 'text-yellow-600',
-        shouldSchedule: true,
-        emailSubject: 'Medium Priority: Project Discussion with Miller House Studio',
-        emailBody: 'Thank you for your interest in Miller House Studio. Based on your responses, we would like to discuss your project further. We will contact you within 48 hours to schedule a consultation. In the meantime, feel free to browse our portfolio at our website.'
-      };
-    } else {
-      return {
-        status: 'Low Priority',
-        message: 'Thank you for your interest. We will contact you when we have availability.',
-        color: 'text-gray-600',
-        shouldSchedule: false,
-        emailSubject: 'Thank You for Your Interest in Miller House Studio',
-        emailBody: 'Thank you for your interest in Miller House Studio. We appreciate you taking the time to provide information about your project. At this time, we have limited availability, but we will keep your information on file and contact you when we have openings. In the meantime, feel free to browse our portfolio at our website.'
-      };
-    }
+  const handleContactClick = () => {
+    setShowModal(true);
   };
 
-  const handleInputChange = (e) => {
+  const handleInputChange = async (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: value
     }));
+
+    // Check for existing appointments when email is entered
+    if (name === 'email' && value) {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/appointments`);
+        console.log("Appointments response:", response.data);
+        
+        if (!response.data || !response.data.success) {
+          throw new Error('Invalid response from server');
+        }
+
+        const appointments = response.data.data || [];
+        
+        if (!Array.isArray(appointments)) {
+          throw new Error('Invalid appointments data format');
+        }
+        
+        // Check if user already has an appointment
+        const existingAppointment = appointments.find(apt => {
+          // If there's no lead property, this appointment is available
+          if (!apt.lead) {
+            return false;
+          }
+          return apt.lead.email === value;
+        });
+
+        if (existingAppointment) {
+          setError(
+            <div>
+              <p>You already have an appointment scheduled for {new Date(existingAppointment.date).toLocaleDateString()} at {existingAppointment.time}.</p>
+              <p>Would you like to reschedule?</p>
+              <div className="mt-4 flex gap-4">
+                <button
+                  onClick={() => {
+                    setError('');
+                    setCurrentStep(2);
+                    if (showModal) {
+                      setShowModal(false);
+                    }
+                  }}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
+                >
+                  Yes, Reschedule
+                </button>
+                <button
+                  onClick={() => {
+                    setError('');
+                    handleContactClick();
+                  }}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded"
+                >
+                  No, Contact Support
+                </button>
+              </div>
+            </div>
+          );
+        } else {
+          setError('');
+        }
+      } catch (error) {
+        console.error('Error checking appointments:', error);
+        setError('Error checking appointment availability. Please try again.');
+      }
+    }
   };
 
   const handleNextStep = () => {
@@ -271,27 +317,21 @@ function App() {
     setFormData(prev => ({ ...prev, appointmentTime: time }));
   };
 
-  const handleQualificationSubmit = async (e) => {
-    e.preventDefault();
-    if (!formData.squareFootage || !formData.financingStatus) {
-      setError('Please fill in all required fields');
-      return;
-    }
-    
-    const score = getQualificationScore();
-    const status = getQualificationStatus(score);
-    
+  const handleQualificationSubmit = async () => {
     try {
+      const status = getQualificationStatus(qualificationScore);
+      
+      // Save lead data to the server
       const response = await axios.post(`${API_BASE_URL}/api/leads`, {
         ...formData,
-        score,
+        qualificationScore,
         status: status.status,
         emailSubject: status.emailSubject,
         emailBody: status.emailBody
       });
 
       if (response.data.success) {
-        if (score >= 25) { // Medium or High priority
+        if (qualificationScore >= 25) { // Medium or High priority
           setShowScheduler(true);
           setShowModal(false);
           fetchAvailableAppointments();
@@ -305,6 +345,7 @@ function App() {
         setError('Failed to submit form. Please try again.');
       }
     } catch (err) {
+      console.error('Error saving lead data:', err);
       setError('An error occurred. Please try again.');
     }
   };
@@ -316,172 +357,53 @@ function App() {
       return;
     }
 
-    console.log('Selected date:', selectedDate);
-    console.log('Selected time:', selectedTime);
-
     setSubmitting(true);
-    setError(''); // Clear any previous errors
-    
     try {
-      // Handle both string date formats and dates with dateFormatted properties
-      let formattedDate;
+      console.log("Submitting appointment with date:", selectedDate, "time:", selectedTime);
       
-      if (typeof selectedDate === 'object' && selectedDate.dateFormatted) {
-        formattedDate = selectedDate.dateFormatted;
-        console.log('Using dateFormatted property:', formattedDate);
-      } else if (typeof selectedDate === 'object' && selectedDate.date) {
-        formattedDate = selectedDate.date;
-        console.log('Using date property:', formattedDate);
-      } else if (selectedDate.includes && selectedDate.includes('T')) {
-        formattedDate = selectedDate.split('T')[0]; // Extract date part from ISO string
-        console.log('Extracted date from ISO string:', formattedDate);
-      } else {
-        formattedDate = selectedDate;
-        console.log('Using date as is:', formattedDate);
+      // Format date properly if it's a Neo4j datetime object
+      let formattedDate = selectedDate;
+      if (typeof selectedDate === 'object' && selectedDate.year) {
+        const year = selectedDate.year.low || selectedDate.year;
+        const month = (selectedDate.month.low || selectedDate.month) - 1;
+        const day = selectedDate.day.low || selectedDate.day;
+        formattedDate = new Date(year, month, day).toISOString().split('T')[0];
       }
       
-      // Handle formatted time if it's an object
-      let formattedTime = selectedTime;
-      if (typeof selectedTime === 'object') {
-        formattedTime = selectedTime.time || selectedTime.toString();
-        console.log('Extracted time from object:', formattedTime);
-      }
-      
-      console.log('Scheduling appointment with data:', {
-        date: formattedDate,
-        time: formattedTime,
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone
-      });
-
       const response = await axios.post(`${API_BASE_URL}/api/appointments`, {
         date: formattedDate,
-        time: formattedTime,
+        time: selectedTime,
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
         service: 'Initial Consultation'
       });
 
-      console.log('Appointment response:', response.data);
+      console.log("Appointment response:", response.data);
 
-      if (response.data && response.data.success) {
-        // Format the date nicely
-        let displayDate;
-        
-        // Handle different date formats coming from the server
-        try {
-          // First try to use the returned appointment data if available
-          if (response.data.data && response.data.data.date) {
-            const serverDate = response.data.data.date;
-            
-            if (typeof serverDate === 'object' && serverDate.year) {
-              // Handle Neo4j date object
-              const year = serverDate.year.low || serverDate.year;
-              const month = (serverDate.month.low || serverDate.month) - 1; // JS months are 0-based
-              const day = serverDate.day.low || serverDate.day;
-              
-              const jsDate = new Date(year, month, day);
-              displayDate = jsDate.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long', 
-                day: 'numeric'
-              });
-              console.log('Formatted Neo4j date object:', displayDate);
-            } else if (typeof serverDate === 'string') {
-              // Handle string date from server
-              const jsDate = new Date(serverDate);
-              if (!isNaN(jsDate.getTime())) {
-                displayDate = jsDate.toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long', 
-                  day: 'numeric'
-                });
-                console.log('Formatted string date from server:', displayDate);
-              }
-            }
-          }
-          
-          // Fallback to original date if server data didn't work
-          if (!displayDate) {
-            const apptDate = new Date(formattedDate);
-            if (!isNaN(apptDate.getTime())) {
-              displayDate = apptDate.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long', 
-                day: 'numeric'
-              });
-              console.log('Formatted using client date:', displayDate);
-            }
-          }
-          
-          // Last resort fallback
-          if (!displayDate) {
-            displayDate = formattedDate;
-            console.log('Using raw date as fallback:', displayDate);
-          }
-        } catch (dateError) {
-          console.error('Error formatting date:', dateError);
-          displayDate = formattedDate; // Use the raw date as fallback
-        }
-        
-        // Format the time nicely
-        const timeDisplay = new Date(`2000-01-01T${formattedTime}`).toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit'
-        });
-        
+      if (response.data) {
         setSuccess(
-          <div className="space-y-5 text-center">
-            <div className="text-green-600">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            
-            <h3 className="text-2xl font-bold text-gray-900">Your Appointment is Confirmed!</h3>
-            
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 my-4">
-              <div className="flex items-center mb-2">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <span className="font-medium text-gray-800">{displayDate}</span>
-              </div>
-              <div className="flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="font-medium text-gray-800">{timeDisplay}</span>
-              </div>
-            </div>
-            
-            <p className="text-gray-700">We've sent a confirmation email to <span className="font-medium">{formData.email}</span> with important preparation details.</p>
-            
-            <div className="mt-3 bg-yellow-50 p-4 rounded-lg border border-yellow-100">
-              <h4 className="font-medium text-gray-800 mb-2">Please Bring to Your Consultation:</h4>
-              <ul className="text-left text-gray-700 space-y-1 pl-5 list-disc">
-                <li>Inspiration photos or examples</li>
-                <li>Preliminary budget information</li>
-                <li>Any existing floor plans or surveys</li>
-                <li>Questions you have about the design process</li>
-              </ul>
-            </div>
-            
-            {response.data.emailSent === false && (
+          <div className="space-y-4">
+            <h3 className="text-xl font-semibold text-green-600">Thank you for scheduling your consultation!</h3>
+            <p>We've sent a confirmation email to {formData.email} with:</p>
+            <ul className="list-disc pl-5 space-y-2">
+              <li>Your appointment details (Date: {formattedDate}, Time: {selectedTime})</li>
+              <li>Important questions to help us prepare for your consultation</li>
+              <li>What to expect during the consultation</li>
+            </ul>
+            {!response.data.emailSent && (
               <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
                 <p className="text-yellow-800">
-                  <span className="font-medium">Note:</span> We were unable to send the confirmation email.
-                  Please save your appointment details shown above.
+                  Note: While your appointment was scheduled successfully, we were unable to send the confirmation email. 
+                  Please save your appointment details or contact us if you need them.
                 </p>
               </div>
             )}
+            <p className="text-sm text-gray-600 mt-4">If you don't see the email, please check your spam folder.</p>
           </div>
         );
+        
+        // Reset state after successful submission
         setShowScheduler(false);
         setCurrentStep(1);
         setFormData({
@@ -491,117 +413,63 @@ function App() {
           state: '',
           squareFootage: '',
           financingStatus: '',
-          budgetRange: '',
+          timeline: '',
+          lotStatus: '',
           score: 0
         });
-      } else {
-        setError(response.data?.error || 'Failed to schedule appointment');
+        setSelectedDate('');
+        setSelectedTime('');
       }
     } catch (error) {
       console.error('Error scheduling appointment:', error);
-      
-      // Enhanced error reporting
-      console.log('Error type:', error.name);
-      console.log('Error message:', error.message);
-      
-      if (error.response) {
-        // The request was made and the server responded with a status code
-        // that falls out of the range of 2xx
-        console.log('Error status:', error.response.status);
-        console.log('Error data:', error.response.data);
-        console.log('Error headers:', error.response.headers);
-        setError(error.response.data?.error || error.response.data?.message || 'Failed to schedule appointment. Please try again.');
-      } else if (error.request) {
-        // The request was made but no response was received
-        console.log('Error request:', error.request);
-        setError('No response received from server. Please try again later.');
-      } else {
-        // Something happened in setting up the request that triggered an Error
-        console.log('Error config:', error.config);
-        setError('Error preparing request. Please try again.');
-      }
+      setError('There was an error scheduling your appointment. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handlePersonalInfoSubmit = (e) => {
-    // Add form event prevention
-    if (e) e.preventDefault();
+  const handlePersonalInfoSubmit = async (event) => {
+    event.preventDefault();
     
-    console.log("Form submitted with data:", formData);
+    // Determine if the form is in a modal by checking if showModal is true
+    const isFromModal = showModal;
     
-    // Error checking
-    if (!formData.name || !formData.email || !formData.phone || !formData.state || !formData.financingStatus || !formData.squareFootage) {
-      setFormError('Please fill out all required fields');
+    // Validate all required fields
+    const requiredFields = ['name', 'email', 'phone', 'state', 'squareFootage', 'financingStatus'];
+    const missingFields = requiredFields.filter(field => !formData[field]);
+    
+    if (missingFields.length > 0) {
+      setError(`Please complete all required fields: ${missingFields.join(', ')}`);
       return;
     }
 
-    // Email validation
-    if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      setFormError('Please enter a valid email address');
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      setError('Please enter a valid email address');
       return;
     }
 
-    // Phone validation
-    if (!/^\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})$/.test(formData.phone)) {
-      setFormError('Please enter a valid phone number');
+    // Validate phone number (basic check for length)
+    if (formData.phone.replace(/\D/g, '').length < 10) {
+      setError('Please enter a valid phone number');
       return;
     }
 
-    // Square footage validation
-    if (isNaN(parseFloat(formData.squareFootage)) || parseFloat(formData.squareFootage) <= 0) {
-      setFormError('Please enter a valid square footage');
-      return;
-    }
-
-    setFormError('');
-    console.log("Validation passed, submitting to server");
-    
-    // Calculate qualification score
-    const qualificationScore = getQualificationScore();
-    console.log("Qualification score:", qualificationScore);
-    
-    // Submit to the server using axios
-    setSubmitting(true);
-    axios.post(`${API_BASE_URL}/api/leads`, {
-      name: formData.name,
-      email: formData.email,
-      phone: formData.phone,
-      state: formData.state,
-      squareFootage: formData.squareFootage,
-      financingStatus: formData.financingStatus,
-      qualificationScore
-    })
-    .then(response => {
-      console.log('Server response:', response.data);
-      setSubmitting(false);
+    try {
+      console.log("Form submitted successfully");
       
-      if (response.data.success) {
-        // First hide the form modal
+      // If no existing appointment, proceed to next step
+      setCurrentStep(2);
+      setShowScheduler(true);
+      
+      if (isFromModal) {
         setShowModal(false);
-        
-        // Check if user selected "Not ready"
-        if (formData.financingStatus === "Not ready") {
-          console.log("User selected 'Not ready', showing success message");
-          // Show success message with cost estimation
-          setShowSuccessMessage(true);
-          setSuccessMessage(`Thank you for your submission. Your estimated project cost is $${costs.average.toLocaleString()}.`);
-        } else {
-          console.log("User is ready for scheduling, showing scheduler");
-          // Show scheduling options
-          setShowScheduler(true);
-          fetchAvailableAppointments();
-        }
-      } else {
-        setFormError('Failed to submit form. Please try again.');
       }
-    })
-    .catch(error => {
+    } catch (error) {
       console.error('Error submitting form:', error);
-      setSubmitting(false);
-      setFormError('There was an error submitting your information. Please try again.');
-    });
+      setError('Error submitting form. Please try again.');
+    }
   };
 
   const handleCostSubmit = () => {
@@ -623,11 +491,11 @@ function App() {
       
       if (response.data.success) {
         // Show scheduling section immediately
-        setShowScheduling(true);
+        setShowScheduler(true);
         setCurrentStep('scheduling');
         // Fetch available appointments
         fetchAvailableAppointments();
-    } else {
+      } else {
         alert('Error saving lead data. Please try again.');
       }
     } catch (error) {
@@ -648,6 +516,8 @@ function App() {
         state: formData.state,
         squareFootage: formData.squareFootage,
         financingStatus: formData.financingStatus,
+        timeline: formData.timeline,
+        lotStatus: formData.lotStatus,
         qualificationScore: score,
         status: status.status,
         emailSubject: status.emailSubject,
@@ -655,7 +525,7 @@ function App() {
       });
 
       if (response.data.success) {
-        setShowScheduling(false);
+        setShowScheduler(false);
         setSuccess(status.message);
         setShowSuccessMessage(true);
         setSuccessMessage(status.message);
@@ -665,7 +535,10 @@ function App() {
           phone: '',
           state: '',
           squareFootage: '',
-          financingStatus: ''
+          financingStatus: '',
+          timeline: '',
+          lotStatus: '',
+          score: 0
         });
       }
     } catch (error) {
@@ -674,55 +547,45 @@ function App() {
   };
 
   const fetchAvailableAppointments = async () => {
-    console.log("Fetching available appointments...");
-    
     try {
-      // Clear previous error
-      setError('');
-      
+      console.log("Fetching available appointments...");
       const response = await axios.get(`${API_BASE_URL}/api/appointments?status=available`);
-      console.log('API response for appointments:', response.data);
+      console.log("Appointments response:", response.data);
       
-      if (response.data && response.data.success && Array.isArray(response.data.data)) {
-        console.log(`Found ${response.data.data.length} appointments in response`);
-        
-        // Filter to only show appointments with 'available' status
-        const availableAppointmentsList = response.data.data.filter(apt => 
-          apt.status === 'available' || apt.status === 'booked' || apt.status === 'scheduled'
-        );
-        
-        console.log(`After filtering, ${availableAppointmentsList.length} appointments are available`);
-        console.log('Available appointments:', availableAppointmentsList);
-        
-        setAvailableAppointments(availableAppointmentsList);
-        
-        // Force scheduler visibility again after loading appointments
-        if (availableAppointmentsList.length > 0) {
-          console.log("Ensuring scheduler is visible after loading appointments");
-          setShowScheduler(true);
-          
-          // If we have appointments, pre-select the first one
-          if (availableAppointmentsList.length > 0) {
-            const firstAppointment = availableAppointmentsList[0];
-            setSelectedDate(firstAppointment.date);
-            setSelectedTime(firstAppointment.time);
-          }
-        }
-      } else {
-        console.error('Unexpected API response format:', response.data);
-        setAvailableAppointments([]);
-        setError('Failed to load appointments: Unexpected data format');
+      if (!response.data || !response.data.success) {
+        throw new Error('Invalid response from server');
       }
+      
+      const appointments = response.data.data || [];
+      console.log("Available appointments:", appointments);
+      
+      // Format the appointments data
+      const formattedAppointments = appointments.map(appointment => ({
+        ...appointment,
+        date: typeof appointment.date === 'object' && appointment.date.year
+          ? new Date(
+              appointment.date.year.low || appointment.date.year,
+              (appointment.date.month.low || appointment.date.month) - 1,
+              appointment.date.day.low || appointment.date.day
+            ).toISOString().split('T')[0]
+          : appointment.date
+      }));
+      
+      if (formattedAppointments.length === 0) {
+        setError('No available appointments found. Please try again later.');
+      } else {
+        setError('');
+      }
+      
+      setAvailableAppointments(formattedAppointments);
     } catch (error) {
       console.error('Error fetching appointments:', error);
-      setError('Failed to load available appointments. Please try again later.');
+      setError('Error checking appointment availability. Please try again.');
       setAvailableAppointments([]);
     }
   };
 
   const handleRescheduleClick = () => {
-    setExistingAppointment(null);
-    setEmailCheckStatus('no-appointment');
     setShowScheduling(true);
     setIsRescheduling(true);
     // Fetch available appointments immediately
@@ -734,11 +597,6 @@ function App() {
     setShowFilterForm(false);
   };
 
-  const handleContactClick = () => {
-    setShowModal(true);
-    setModalType('contact');
-  };
-
   const resetForm = () => {
     setFormData({
       name: '',
@@ -746,12 +604,17 @@ function App() {
       phone: '',
       state: '',
       squareFootage: '',
-      financingStatus: ''
+      financingStatus: '',
+      timeline: '',
+      lotStatus: '',
+      score: 0
     });
-    setQualificationScore(0);
+    setCurrentStep(1);
+    setError('');
+    setSuccess('');
+    setSelectedDate('');
+    setSelectedTime('');
     setShowScheduler(false);
-    setShowFilterForm(false);
-    setShowSuccessMessage(false);
   };
 
   const handleSubmit = async (e) => {
@@ -803,7 +666,6 @@ function App() {
     <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-lg">
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Project Qualification</h2>
       <form onSubmit={handleFilterSubmit} className="space-y-6">
-        {/* Timeline question commented out
         <div>
           <label className="block text-sm font-medium text-gray-700">Timeline</label>
           <select
@@ -819,7 +681,6 @@ function App() {
             <option value="Just exploring">Just exploring</option>
           </select>
         </div>
-        */}
 
         <div>
           <label className="block text-sm font-medium text-gray-700">Financing Status</label>
@@ -830,14 +691,13 @@ function App() {
             required
           >
             <option value="">Select financing status</option>
-            <option value="Building with cash">Building with cash</option>
-            <option value="Financing arranged">Financing arranged</option>
-            <option value="Pre Approved">Pre Approved</option>
-            <option value="Not ready">Not ready</option>
+            <option value="Ready to proceed">Ready to proceed</option>
+            <option value="Pre-approved">Pre-approved</option>
+            <option value="In process">In process</option>
+            <option value="Not started">Not started</option>
           </select>
         </div>
 
-        {/* Lot Status question commented out
         <div>
           <label className="block text-sm font-medium text-gray-700">Lot Status</label>
           <select
@@ -853,28 +713,14 @@ function App() {
             <option value="Not started">Not started</option>
           </select>
         </div>
-        */}
 
-        <div className="flex justify-between">
-          <button
-            type="button"
-            onClick={() => {
-              console.log("Debug: Directly showing scheduler");
-              setShowModal(false);
-              setShowScheduler(true);
-              fetchAvailableAppointments();
-            }}
-            className="bg-gray-300 text-gray-700 px-3 py-1 rounded-lg hover:bg-gray-400 transition-colors text-xs"
-          >
-            Test Scheduler
-          </button>
-          <button
-            type="submit"
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Submit
-          </button>
-        </div>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+        >
+          {submitting ? 'Submitting...' : 'Submit'}
+        </button>
       </form>
     </div>
   );
@@ -885,408 +731,360 @@ function App() {
   };
 
   return (
-    <Router>
-      <div className="min-h-screen bg-gray-100">
-        <nav className="bg-white shadow-lg">
-          <div className="max-w-7xl mx-auto px-4">
-            <div className="flex justify-between h-16">
-              <div className="flex">
-                <Link to="/" className="flex items-center">
-                  <span className="text-xl font-bold">Home</span>
-                </Link>
-                <Link to="/admin" className="flex items-center ml-8">
-                  <span className="text-xl">Admin</span>
-                </Link>
-              </div>
+    <div className="min-h-screen bg-gray-100">
+      <nav className="bg-white shadow-lg">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex justify-between h-16">
+            <div className="flex">
+              <Link to="/" className="flex items-center">
+                <span className="text-xl font-bold">Home</span>
+              </Link>
+              <Link to="/admin" className="flex items-center ml-8">
+                <span className="text-xl">Admin</span>
+              </Link>
             </div>
           </div>
-        </nav>
+        </div>
+      </nav>
 
-        <Routes>
-          <Route path="/admin" element={<Admin />} />
-          <Route path="/photo-gallery" element={<PhotoGallery />} />
-          <Route path="/video-gallery" element={<VideoGallery />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/test-api" element={<TestAPI />} />
-          <Route path="/debug-api" element={<DebugAPI />} />
-          <Route path="/house-plans" element={<HousePlans />} />
-          <Route path="/dts-videos" element={<DTSVideos />} />
-          <Route path="/" element={
-            <div className="min-h-screen bg-gray-50">
-              {/* Navigation */}
-              <nav className="bg-white shadow">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                  <div className="flex justify-between h-16">
-                    <div className="flex">
-                      <div className="flex-shrink-0 flex items-center">
-                        <Link to="/" className="text-xl font-bold text-gray-800">Miller House Studio</Link>
-                      </div>
-                      <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-                        <Link to="/photo-gallery" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
-                          Photo Gallery
-                        </Link>
-                        <Link to="/video-gallery" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
-                          Video Gallery
-                        </Link>
-                        <Link to="/house-plans" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
-                          House Plans
-                        </Link>
-                        <Link to="/dts-videos" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
-                          2D/3D Videos
-                        </Link>
-                        <Link to="/about" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
-                          About
-                        </Link>
-                      </div>
+      <Routes>
+        <Route path="/admin" element={<Admin />} />
+        <Route path="/photo-gallery" element={<PhotoGallery />} />
+        <Route path="/video-gallery" element={<VideoGallery />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/salesman/:id" element={<SalesmanDashboard />} />
+        <Route path="/" element={
+          <div className="min-h-screen bg-gray-50">
+            {/* Navigation */}
+            <nav className="bg-white shadow">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between h-16">
+                  <div className="flex">
+                    <div className="flex-shrink-0 flex items-center">
+                      <Link to="/" className="text-xl font-bold text-gray-800">Miller House Studio</Link>
                     </div>
-                    <div className="flex items-center">
-                      <button
-                        onClick={() => setShowModal(true)}
-                        className="ml-8 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                      >
-                        Schedule Meeting
-                      </button>
+                    <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
+                      <Link to="/photo-gallery" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
+                        Photo Gallery
+                      </Link>
+                      <Link to="/video-gallery" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
+                        Video Gallery
+                      </Link>
+                      <Link to="/about" className="text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300">
+                        About
+                      </Link>
                     </div>
                   </div>
-                </div>
-              </nav>
-
-              {/* Hero Section */}
-              <div className="relative bg-gray-900 h-[600px]">
-                <div className="absolute inset-0">
-                  <img
-                    src="/images/BackGround.jpg"
-                    alt="Modern house exterior"
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-gray-900 opacity-75"></div>
-                </div>
-                <div className="relative max-w-7xl mx-auto py-24 px-4 sm:py-32 sm:px-6 lg:px-8">
-                  <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl">Let's Design Your Dream Home!</h1>
-                  <p className="mt-6 text-xl text-gray-300 max-w-3xl">
-                    Let us help you create the home of your dreams with our expert design and construction services.
-                  </p>
-                  <div className="mt-10">
+                  <div className="flex items-center">
                     <button
                       onClick={() => setShowModal(true)}
-                      className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      className="ml-8 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     >
-                      Get Started
+                      Schedule Meeting
                     </button>
                   </div>
                 </div>
               </div>
+            </nav>
 
-              {/* Form Modal */}
-              {showModal && (
-                <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4">
-                  <div className="bg-white rounded-lg max-w-2xl w-full p-6">
-                    <div className="flex justify-between items-center mb-4">
-                      <h2 className="text-2xl font-bold text-gray-900">
-                        Project Information
-                      </h2>
-                      <button
-                        onClick={() => {
-                          setShowModal(false);
-                          setFormData({
-                            name: '',
-                            email: '',
-                            phone: '',
-                            state: '',
-                            squareFootage: '',
-                            financingStatus: ''
-                          });
-                        }}
-                        className="text-gray-400 hover:text-gray-500"
-                      >
-                        <span className="sr-only">Close</span>
-                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
+            {/* Hero Section */}
+            <div className="relative bg-gray-900 h-[600px]">
+              <div className="absolute inset-0">
+                <img
+                  src="/images/BackGround.jpg"
+                  alt="Modern house exterior"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gray-900 opacity-75"></div>
+              </div>
+              <div className="relative max-w-7xl mx-auto py-24 px-4 sm:py-32 sm:px-6 lg:px-8">
+                <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl">Let's Design Your Dream Home!</h1>
+                <p className="mt-6 text-xl text-gray-300 max-w-3xl">
+                  Let us help you create the home of your dreams with our expert design and construction services.
+                </p>
+                <div className="mt-10">
+                  <button
+                    onClick={() => {
+                      console.log("Get Started button clicked, setting showModal to true");
+                      setShowModal(true);
+                      console.log("Current showModal state:", showModal);
+                    }}
+                    className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    Get Started
+                  </button>
+                </div>
+              </div>
+            </div>
 
-                    <form onSubmit={(e) => handlePersonalInfoSubmit(e)} className="space-y-6">
-                      {formError && (
-                        <div className="bg-red-50 border-l-4 border-red-400 p-4 mb-4">
-                          <div className="flex">
-                            <div className="flex-shrink-0">
-                              <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                              </svg>
-                            </div>
-                            <div className="ml-3">
-                              <p className="text-sm text-red-700">{formError}</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+            {/* Home page content */}
+            <div className="container mx-auto px-4 py-8">
+              {!showSuccessMessage && (
+                <div className="bg-white p-6 rounded-lg shadow-lg max-h-[80vh] overflow-y-auto">
+                  <div className="mb-4">
+                    <h2 className="text-2xl font-semibold text-gray-800 mb-2">Custom Home Consultation</h2>
+                    <p className="text-gray-600">
+                      Click the "Get Started" button above to request your free consultation.
+                    </p>
                     
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Name</label>
-                        <input
-                          type="text"
-                          name="name"
-                          value={formData.name}
-                          onChange={handleInputChange}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Email</label>
-                        <input
-                          type="email"
-                          name="email"
-                          value={formData.email}
-                          onChange={handleInputChange}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Phone</label>
-                        <input
-                          type="tel"
-                          name="phone"
-                          value={formData.phone}
-                          onChange={handleInputChange}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">State</label>
-                        <select
-                          name="state"
-                          value={formData.state}
-                          onChange={handleInputChange}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                          required
-                        >
-                          <option value="">Select your state</option>
-                          {Object.keys(stateCostRanges).map(state => (
-                            <option key={state} value={state}>{state}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Square Footage</label>
-                        <input
-                          type="number"
-                          name="squareFootage"
-                          value={formData.squareFootage}
-                          onChange={handleInputChange}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                          required
-                        />
-                      </div>
-                      
-                      {costs && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                          <div className="bg-green-50 p-3 rounded-lg shadow">
-                            <h3 className="text-sm font-medium text-green-700">Low Estimate</h3>
-                            <p className="text-lg font-semibold text-green-600">${costs.low.toLocaleString()}</p>
-                          </div>
-                          <div className="bg-blue-50 p-4 rounded-lg shadow transform scale-105">
-                            <h3 className="text-xl font-semibold text-blue-700">Average Estimate</h3>
-                            <p className="text-3xl font-bold text-blue-600">${costs.average.toLocaleString()}</p>
-                          </div>
-                          <div className="bg-red-50 p-3 rounded-lg shadow">
-                            <h3 className="text-sm font-medium text-red-700">High Estimate</h3>
-                            <p className="text-lg font-semibold text-red-600">${costs.high.toLocaleString()}</p>
-                          </div>
-                        </div>
-                      )}
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Financing Status</label>
-                        <select
-                          name="financingStatus"
-                          value={formData.financingStatus}
-                          onChange={handleInputChange}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                          required
-                        >
-                          <option value="">Select your financing status</option>
-                          <option value="Building with cash">Building with cash</option>
-                          <option value="Financing arranged">Financing arranged</option>
-                          <option value="Pre Approved">Pre Approved</option>
-                          <option value="Not ready">Not ready</option>
-                        </select>
-                      </div>
-                      
-                      <div className="flex justify-end">
-                        <button
-                          type="submit"
-                          disabled={submitting}
-                          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                        >
-                          {submitting ? 'Submitting...' : 'Submit'}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-              )}
-
-              {/* Success Message Modal */}
-              {showSuccessMessage && (
-                <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4">
-                  <div className="bg-white rounded-lg p-6 max-w-md w-full">
-                    <h2 className="text-2xl font-bold mb-4">Thank You!</h2>
-                    <p className="mb-4">{successMessage}</p>
-                    {costs && (
-                      <div className="mb-4">
-                        <p className="text-lg font-semibold">Your Project Details</p>
-                        <p className="text-sm text-gray-600">Estimated Cost: ${costs.average.toLocaleString()}</p>
-                        <p className="text-xs text-gray-500">Square Footage: {formData.squareFootage}</p>
-                        <p className="text-xs text-gray-500">Financing: {formData.financingStatus}</p>
-                      </div>
-                    )}
-                    <div className="flex justify-end">
+                    <div className="mt-4 flex justify-center">
                       <button
                         onClick={() => {
-                          setShowSuccessMessage(false);
-                          resetForm();
+                          console.log("Opening form modal");
+                          setShowModal(true);
                         }}
-                        className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                        className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                       >
-                        Close
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Scheduler Modal */}
-              {showScheduler && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                  <div className="bg-white rounded-lg p-6 max-w-md w-full">
-                    <h2 className="text-2xl font-bold mb-4">Schedule Your Appointment</h2>
-                    {console.log("Scheduler is visible, appointments:", availableAppointments)}
-                    <form onSubmit={handleScheduleSubmit}>
-                      <div className="mb-4">
-                        <label className="block text-gray-700 text-sm font-bold mb-2">
-                          Available Appointments
-                        </label>
-                        <div className="max-h-60 overflow-y-auto border rounded">
-                          {availableAppointments.length > 0 ? (
-                            availableAppointments.map((appointment) => (
-                              <div
-                                key={`${appointment.date}-${appointment.time}`}
-                                className={`p-3 cursor-pointer hover:bg-gray-100 ${
-                                  selectedDate === appointment.date && selectedTime === appointment.time
-                                    ? 'bg-blue-100'
-                                    : ''
-                                }`}
-                                onClick={() => {
-                                  setSelectedDate(appointment.date);
-                                  setSelectedTime(appointment.time);
-                                }}
-                              >
-                                <div className="font-medium">
-                                  {appointment.dateFormatted 
-                                    ? new Date(appointment.dateFormatted).toLocaleDateString('en-US', {
-                                        weekday: 'long',
-                                        year: 'numeric',
-                                        month: 'long',
-                                        day: 'numeric',
-                                      })
-                                    : new Date(appointment.date.split('T')[0]).toLocaleDateString('en-US', {
-                                        weekday: 'long',
-                                        year: 'numeric',
-                                        month: 'long',
-                                        day: 'numeric',
-                                      })
-                                  }
-                                </div>
-                                <div className="text-gray-600">
-                                  {appointment.time 
-                                    ? new Date(`2000-01-01T${appointment.time}`).toLocaleTimeString('en-US', {
-                                        hour: 'numeric',
-                                        minute: '2-digit',
-                                      })
-                                    : '(No time specified)'
-                                  }
-                                </div>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="p-4 text-center text-gray-500">
-                              No appointments available. Please try again later.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      {error && <div className="text-red-500 mb-4">{error}</div>}
-                      <div className="flex justify-end gap-4">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowScheduler(false);
-                            setShowSuccessMessage(true);
-                            setSuccessMessage(`Thank you for your submission. Your estimated project cost is $${costs.average.toLocaleString()}.`);
-                          }}
-                          className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                        >
-                          Skip Scheduling
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={!selectedDate || !selectedTime || submitting}
-                          className={`px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 ${
-                            (!selectedDate || !selectedTime || submitting) && 'opacity-50 cursor-not-allowed'
-                          }`}
-                        >
-                          {submitting ? 'Scheduling...' : 'Schedule Appointment'}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-              )}
-
-              {/* Confirmation Modal */}
-              {success && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                  <div className="bg-white rounded-lg p-6 max-w-lg w-full">
-                    <div className="mb-4 flex justify-between">
-                      <div className="text-2xl font-bold">Appointment Confirmed</div>
-                      <button
-                        onClick={() => {
-                          setSuccess(null);
-                          resetForm();
-                        }}
-                        className="text-gray-400 hover:text-gray-500"
-                      >
-                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                    <div className="overflow-y-auto max-h-[70vh]">
-                      {success}
-                    </div>
-                    <div className="mt-6 flex justify-end">
-                      <button
-                        onClick={() => {
-                          setSuccess(null);
-                          resetForm();
-                        }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                      >
-                        Close
+                        Get Started Now
                       </button>
                     </div>
                   </div>
                 </div>
               )}
             </div>
-          } />
-        </Routes>
-      </div>
-    </Router>
+          </div>
+        } />
+      </Routes>
+
+      {showSuccessMessage && (
+        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-2xl font-bold mb-4">Thank You!</h2>
+            <p className="mb-4">{successMessage}</p>
+            {qualificationScore >= 50 && (
+              <div className="mb-4">
+                <p className="text-lg font-semibold">Your Qualification Score: {qualificationScore}%</p>
+                <p className="text-sm text-gray-600">Estimated Cost: ${costs?.toLocaleString()}</p>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button
+                onClick={() => {
+                  setShowSuccessMessage(false);
+                  if (qualificationScore >= 50) {
+                    setShowScheduler(true);
+                  }
+                }}
+                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+              >
+                {qualificationScore >= 50 ? 'Schedule Appointment' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          {console.log("Modal component rendering, showModal is true")}
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between mb-4">
+              <h2 className="text-2xl font-bold">Get Started</h2>
+              <button 
+                onClick={() => {
+                  console.log("Modal close button clicked");
+                  setShowModal(false);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="max-w-screen-lg mx-auto px-2 sm:px-4">
+              <div className="bg-white rounded-lg max-w-xl mx-auto">
+                <form onSubmit={handlePersonalInfoSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Name</label>
+                    <input
+                      type="text"
+                      name="name"
+                      value={formData.name}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Email</label>
+                    <input
+                      type="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Phone</label>
+                    <input
+                      type="tel"
+                      name="phone"
+                      value={formData.phone}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">State</label>
+                    <select
+                      name="state"
+                      value={formData.state}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    >
+                      <option value="">Select your state</option>
+                      {Object.keys(stateCostRanges).map(state => (
+                        <option key={state} value={state}>{state}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Square Footage</label>
+                    <input
+                      type="number"
+                      name="squareFootage"
+                      value={formData.squareFootage}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  
+                  {formData.squareFootage && formData.state && costs && (
+                    <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">Estimated Project Cost</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-green-50 p-3 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-green-700">Low Estimate</h4>
+                          <p className="text-lg font-semibold text-green-600">${costs.low.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-blue-50 p-4 rounded-lg shadow transform scale-105">
+                          <h4 className="text-xl font-semibold text-blue-700">Average Estimate</h4>
+                          <p className="text-2xl font-bold text-blue-600">${costs.average.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-red-50 p-3 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-red-700">High Estimate</h4>
+                          <p className="text-lg font-semibold text-red-600">${costs.high.toLocaleString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Financing Status</label>
+                    <select
+                      name="financingStatus"
+                      value={formData.financingStatus}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    >
+                      <option value="">Select your financing status</option>
+                      <option value="Ready to proceed">Ready to proceed</option>
+                      <option value="Pre-approved">Pre-approved</option>
+                      <option value="In process">In process</option>
+                    </select>
+                  </div>
+                  
+                  {error && (
+                    <div className="p-3 bg-red-50 text-red-700 rounded-md">
+                      {error}
+                    </div>
+                  )}
+                  
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showScheduler && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <h2 className="text-2xl font-bold mb-4">Schedule Your Appointment</h2>
+            <form onSubmit={handleScheduleSubmit}>
+              <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2">
+                  Available Appointments
+                </label>
+                {availableAppointments.length > 0 ? (
+                  <div className="max-h-60 overflow-y-auto border rounded">
+                    {availableAppointments.map((appointment) => (
+                      <div
+                        key={`${appointment.id}`}
+                        className={`p-3 cursor-pointer hover:bg-gray-100 ${
+                          selectedDate === appointment.date && selectedTime === appointment.time
+                            ? 'bg-blue-100'
+                            : ''
+                        }`}
+                        onClick={() => {
+                          console.log("Selected appointment:", appointment);
+                          setSelectedDate(appointment.date);
+                          setSelectedTime(appointment.time);
+                        }}
+                      >
+                        <div className="font-medium">
+                          {new Date(appointment.date).toLocaleDateString('en-US', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
+                        </div>
+                        <div className="text-gray-600">
+                          {appointment.time}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-gray-500 border rounded">
+                    No appointments available. Please try again later.
+                  </div>
+                )}
+              </div>
+              {error && <div className="text-red-500 mb-4">{error}</div>}
+              <div className="flex justify-end gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowScheduler(false);
+                    setCurrentStep(1);
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!selectedDate || !selectedTime || submitting}
+                  className={`px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 ${
+                    (!selectedDate || !selectedTime || submitting) && 'opacity-50 cursor-not-allowed'
+                  }`}
+                >
+                  {submitting ? 'Scheduling...' : 'Schedule Appointment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

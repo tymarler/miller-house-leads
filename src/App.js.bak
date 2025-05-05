@@ -1,0 +1,185 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { HomeIcon, PhoneIcon } from '@heroicons/react/24/outline';
+import classNames from 'classnames';
+import Gallery from './pages/Gallery';
+import { Link, Routes, Route, useLocation } from 'react-router-dom';
+import About from './pages/About';
+import PhotoGallery from './pages/PhotoGallery';
+import VideoGallery from './pages/VideoGallery';
+import { PhotoIcon, VideoCameraIcon, UserGroupIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import Admin from './pages/Admin';
+import API_BASE_URL from './config';
+
+// Cost per square foot ranges by state
+const stateCostRanges = {
+  'Alabama': { min: 130, max: 150 },
+  'Alaska': { min: 180, max: 250 },
+  'Arizona': { min: 150, max: 200 },
+  'Arkansas': { min: 120, max: 140 },
+  'California': { min: 200, max: 600 },
+  'Colorado': { min: 145, max: 250 },
+  'Connecticut': { min: 160, max: 300 },
+  'Delaware': { min: 140, max: 200 },
+  'Florida': { min: 150, max: 250 },
+  'Georgia': { min: 140, max: 180 },
+  'Hawaii': { min: 205, max: 350 },
+  'Idaho': { min: 130, max: 180 },
+  'Illinois': { min: 140, max: 220 },
+  'Indiana': { min: 130, max: 200 },
+  'Iowa': { min: 130, max: 170 },
+  'Kansas': { min: 130, max: 160 },
+  'Kentucky': { min: 140, max: 180 },
+  'Louisiana': { min: 130, max: 160 },
+  'Maine': { min: 150, max: 220 },
+  'Maryland': { min: 160, max: 250 },
+  'Massachusetts': { min: 190, max: 350 },
+  'Michigan': { min: 130, max: 220 },
+  'Minnesota': { min: 160, max: 260 },
+  'Mississippi': { min: 120, max: 140 },
+  'Missouri': { min: 130, max: 180 },
+  'Montana': { min: 140, max: 200 },
+  'Nebraska': { min: 130, max: 170 },
+  'Nevada': { min: 150, max: 220 },
+  'New Hampshire': { min: 150, max: 230 },
+  'New Jersey': { min: 170, max: 300 },
+  'New Mexico': { min: 140, max: 190 },
+  'New York': { min: 185, max: 400 },
+  'North Carolina': { min: 140, max: 200 },
+  'North Dakota': { min: 130, max: 170 },
+  'Ohio': { min: 140, max: 240 },
+  'Oklahoma': { min: 130, max: 160 },
+  'Oregon': { min: 150, max: 250 },
+  'Pennsylvania': { min: 140, max: 220 },
+  'Rhode Island': { min: 160, max: 300 },
+  'South Carolina': { min: 140, max: 200 },
+  'South Dakota': { min: 130, max: 160 },
+  'Tennessee': { min: 140, max: 180 },
+  'Texas': { min: 140, max: 300 },
+  'Utah': { min: 140, max: 200 },
+  'Vermont': { min: 150, max: 220 },
+  'Virginia': { min: 150, max: 220 },
+  'Washington': { min: 140, max: 250 },
+  'West Virginia': { min: 130, max: 170 },
+  'Wisconsin': { min: 140, max: 220 },
+  'Wyoming': { min: 140, max: 190 }
+};
+
+// Add state explanations
+const stateExplanations = {
+  'Alabama': 'Low labor and material costs in the South keep it affordable.',
+  'Alaska': 'High transportation costs for materials and remote locations drive prices up.',
+  'Arizona': 'Moderate costs with some increases in urban areas like Phoenix.',
+  'Arkansas': 'One of the cheapest states due to low living costs and ample rural land.',
+  'California': 'Varies widely; rural areas around $200, urban centers like San Francisco up to $600+ due to strict codes and high demand.',
+  'Colorado': 'Higher in Denver due to growth; rural areas lean toward the lower end.',
+  'Connecticut': 'High cost of living and labor in the Northeast push prices up.',
+  'Delaware': 'Moderate costs with proximity to urban markets like Philadelphia.',
+  'Florida': 'Hurricane-resistant builds increase costs, especially coastal areas.',
+  'Georgia': 'Affordable in rural zones, pricier near Atlanta.',
+  'Hawaii': 'The most expensive state due to shipping costs and limited land.',
+  'Idaho': 'Lower costs but rising due to population growth in Boise.',
+  'Illinois': 'Chicago spikes costs; rural areas stay lower.',
+  'Indiana': 'Affordable Midwest rates with urban variation.',
+  'Iowa': 'Low labor costs and flat terrain keep it economical.',
+  'Kansas': 'Similar to Iowa, with minimal geographic challenges.',
+  'Kentucky': 'Affordable, with slight increases near Louisville.',
+  'Louisiana': 'Low costs offset by flood-resistant building needs.',
+  'Maine': 'Harsh winters and rural logistics raise prices.',
+  'Maryland': 'Proximity to D.C. and high living costs push it up.',
+  'Massachusetts': 'High labor rates and strict codes in Boston drive the range.',
+  'Michigan': 'Detroit around $180; rural areas cheaper.',
+  'Minnesota': 'Cold climate requires extra insulation and heating.',
+  'Mississippi': 'The cheapest state due to low wages and material costs.',
+  'Missouri': 'Affordable, with urban areas like St. Louis slightly higher.',
+  'Montana': 'Remote areas increase material transport costs.',
+  'Nebraska': 'Flat land and low labor keep costs down.',
+  'Nevada': 'Las Vegas growth pushes urban costs; rural stays moderate.',
+  'New Hampshire': 'Similar to Maine, with rural and winter factors.',
+  'New Jersey': 'High demand near NYC and strict regulations.',
+  'New Mexico': 'Moderate costs with some rural savings.',
+  'New York': 'Rural upstate around $185; NYC metro can hit $1,800 in extreme cases.',
+  'North Carolina': 'Affordable South with urban spikes in Raleigh.',
+  'North Dakota': 'Low population density keeps costs reasonable.',
+  'Ohio': 'Midwest affordability with variation in cities like Columbus.',
+  'Oklahoma': 'Low costs due to rural economy and minimal regulation.',
+  'Oregon': 'Portland\'s eco-friendly codes raise costs; rural is cheaper.',
+  'Pennsylvania': 'Pittsburgh and Philly higher; rural lower.',
+  'Rhode Island': 'Small state, high living costs near Providence.',
+  'South Carolina': 'Coastal areas pricier due to storm resistance.',
+  'South Dakota': 'Low cost of living and labor.',
+  'Tennessee': 'Affordable, with Nashville pushing urban costs up.',
+  'Texas': 'Vast range; rural at $140, Austin or Houston closer to $300.',
+  'Utah': 'Growth in Salt Lake City increases demand and costs.',
+  'Vermont': 'Rural logistics and cold climate add expenses.',
+  'Virginia': 'Northern VA near D.C. hits the high end.',
+  'Washington': 'Seattle\'s tech boom spikes costs; rural is lower.',
+  'West Virginia': 'Low wages and rural setting keep it cheap.',
+  'Wisconsin': 'Midwest baseline with winter building costs.',
+  'Wyoming': 'Sparse population and transport costs balance affordability.'
+};
+
+function App() {
+  console.log("App component rendering");
+  
+  const location = useLocation();
+  const [currentRoute, setCurrentRoute] = useState("/");
+  
+  useEffect(() => {
+    console.log("Current location: ", location.pathname);
+    setCurrentRoute(location.pathname);
+  }, [location]);
+  
+  const [currentStep, setCurrentStep] = useState(1);
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    state: '',
+    squareFootage: '',
+    financingStatus: '',
+    timeline: '',
+    lotStatus: ''
+  });
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState('');
+  const [qualificationScore, setQualificationScore] = useState(0);
+  const [showFilterForm, setShowFilterForm] = useState(false);
+  const [showScheduler, setShowScheduler] = useState(false);
+  const [availableAppointments, setAvailableAppointments] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState('');
+  const [schedulingStatus, setSchedulingStatus] = useState('');
+  const [showFilter, setShowFilter] = useState(false);
+  const [showScheduling, setShowScheduling] = useState(false);
+  const [isRescheduling, setIsRescheduling] = useState(false);
+  const [activeSection, setActiveSection] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [existingAppointment, setExistingAppointment] = useState(null);
+  const [emailCheckStatus, setEmailCheckStatus] = useState(null);
+  const [costs, setCosts] = useState(null);
+
+  const getQualificationScore = () => {
+    let score = 0;
+    
+    // Financing Status
+    if (formData.financingStatus === 'Ready to proceed') score += 15;
+    else if (formData.financingStatus === 'Pre-approved') score += 10;
+    else if (formData.financingStatus === 'In process') score += 5;
+    
+    return score;
+  };
+
+  return (
+    <div>
+      {/* Rest of the component code */}
+    </div>
+  );
+}
+
+export default App; 
