@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 // Database connection settings
 const uri = process.env.NEO4J_URI || 'bolt://localhost:7687';
 const user = process.env.NEO4J_USER || 'neo4j';
-const password = process.env.NEO4J_PASSWORD || 'Sannas01!';
+const password = process.env.NEO4J_PASSWORD || 'MillerHouse123!';
 const dbName = 'MillerHouse';
 
 console.log('Connecting to Neo4j database...');
@@ -13,9 +13,9 @@ console.log(`URI: ${uri}, User: ${user}, Database: ${dbName}`);
 
 // Initialize Neo4j driver
 const driver = neo4j.driver(uri, neo4j.auth.basic(user, password), {
-  encrypted: false,
-  trust: 'TRUST_ALL_CERTIFICATES',
-  maxConnectionPoolSize: 50
+  maxConnectionLifetime: 3 * 60 * 60 * 1000, // 3 hours
+  maxConnectionPoolSize: 50,
+  connectionAcquisitionTimeout: 2 * 60 * 1000, // 2 minutes
 });
 
 // Create appointments for the next 14 days
@@ -31,69 +31,44 @@ async function createAppointments() {
     console.log(`Deleted existing available appointments`);
     
     // Create appointments for the next 14 days
-    const today = new Date();
+    const now = new Date();
+    const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    
     const appointmentsCreated = [];
     
-    for (let i = 0; i < 14; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + i);
-      const formattedDate = date.toISOString().split('T')[0];
+    // Create appointments for each day
+    for (let date = new Date(now); date <= twoWeeksFromNow; date.setDate(date.getDate() + 1)) {
+      // Skip weekends
+      if (date.getDay() === 0 || date.getDay() === 6) continue;
       
-      // Morning appointment (9 AM)
-      const morningAppointment = {
-        id: `morning-${i}-${uuidv4().substring(0, 8)}`,
-        date: formattedDate,
-        time: '09:00',
-        status: 'available',
-        createdAt: new Date().toISOString()
-      };
-      
-      // Afternoon appointment (2 PM)
-      const afternoonAppointment = {
-        id: `afternoon-${i}-${uuidv4().substring(0, 8)}`,
-        date: formattedDate,
-        time: '14:00',
-        status: 'available',
-        createdAt: new Date().toISOString()
-      };
-      
-      // Create morning appointment
-      await session.run(
-        `CREATE (a:Appointment {
-          id: $id,
-          date: datetime($date),
-          time: $time,
-          status: $status,
-          createdAt: datetime(),
-          updatedAt: datetime()
-        }) RETURN a`,
-        {
-          id: morningAppointment.id,
-          date: formattedDate,
-          time: morningAppointment.time,
-          status: morningAppointment.status
-        }
-      );
-      appointmentsCreated.push(morningAppointment);
-      
-      // Create afternoon appointment
-      await session.run(
-        `CREATE (a:Appointment {
-          id: $id,
-          date: datetime($date),
-          time: $time,
-          status: $status,
-          createdAt: datetime(),
-          updatedAt: datetime()
-        }) RETURN a`,
-        {
-          id: afternoonAppointment.id,
-          date: formattedDate,
-          time: afternoonAppointment.time,
-          status: afternoonAppointment.status
-        }
-      );
-      appointmentsCreated.push(afternoonAppointment);
+      // Create appointments for each time slot
+      for (let hour = 9; hour <= 17; hour++) {
+        const appointmentDateTime = new Date(date);
+        appointmentDateTime.setHours(hour, 0, 0, 0);
+        
+        // Skip if the appointment is in the past
+        if (appointmentDateTime < now) continue;
+        
+        const appointmentId = uuidv4();
+        
+        await session.run(`
+          MERGE (a:Appointment {datetime: datetime($datetime)})
+          ON CREATE SET a += {
+            id: $id,
+            status: 'available',
+            createdAt: datetime()
+          }
+        `, {
+          datetime: appointmentDateTime.toISOString(),
+          id: appointmentId
+        });
+        
+        appointmentsCreated.push({
+          id: appointmentId,
+          datetime: appointmentDateTime.toISOString(),
+          status: 'available'
+        });
+      }
     }
     
     console.log(`Created ${appointmentsCreated.length} new appointments`);
@@ -102,75 +77,64 @@ async function createAppointments() {
     const scheduledAppointments = [
       {
         appointmentId: `scheduled-1-${uuidv4().substring(0, 8)}`,
-        date: new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        time: '10:00',
+        datetime: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
         leadName: 'John Smith',
         leadEmail: 'john.smith@example.com',
         leadPhone: '555-123-4567'
       },
       {
         appointmentId: `scheduled-2-${uuidv4().substring(0, 8)}`,
-        date: new Date(today.getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        time: '15:30',
+        datetime: new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000).toISOString(),
         leadName: 'Sarah Johnson',
         leadEmail: 'sarah.j@example.com',
         leadPhone: '555-987-6543'
       }
     ];
     
-    for (const apt of scheduledAppointments) {
+    // Create scheduled appointments
+    for (const appointment of scheduledAppointments) {
       // Create lead
-      const leadId = `lead-${uuidv4().substring(0, 8)}`;
-      await session.run(
-        `CREATE (l:Lead {
+      await session.run(`
+        MERGE (l:Lead {email: $email})
+        ON CREATE SET l += {
           id: $id,
           name: $name,
-          email: $email,
           phone: $phone,
-          qualificationScore: $score,
-          status: 'High Priority',
-          createdAt: datetime(),
-          updatedAt: datetime()
-        }) RETURN l`,
-        {
-          id: leadId,
-          name: apt.leadName,
-          email: apt.leadEmail,
-          phone: apt.leadPhone,
-          score: Math.floor(Math.random() * 20) + 30 // Random score 30-50
+          createdAt: datetime()
         }
-      );
-      
-      // Create appointment and relationship
-      await session.run(
-        `CREATE (a:Appointment {
-          id: $id,
-          date: datetime($date),
-          time: $time,
-          status: 'scheduled',
-          leadName: $leadName,
-          leadEmail: $leadEmail,
-          leadPhone: $leadPhone,
-          createdAt: datetime(),
+        ON MATCH SET l += {
+          name: $name,
+          phone: $phone,
           updatedAt: datetime()
+        }
+        RETURN l
+      `, {
+        id: uuidv4(),
+        name: appointment.leadName,
+        email: appointment.leadEmail,
+        phone: appointment.leadPhone
+      });
+      
+      // Create appointment and link to lead
+      await session.run(`
+        CREATE (a:Appointment {
+          id: $id,
+          datetime: datetime($datetime),
+          status: 'booked',
+          createdAt: datetime()
         })
         WITH a
-        MATCH (l:Lead {id: $leadId})
-        CREATE (l)-[:HAS_APPOINTMENT]->(a)
-        RETURN a`,
-        {
-          id: apt.appointmentId,
-          date: apt.date,
-          time: apt.time,
-          leadName: apt.leadName,
-          leadEmail: apt.leadEmail,
-          leadPhone: apt.leadPhone,
-          leadId: leadId
-        }
-      );
+        MATCH (l:Lead {email: $email})
+        CREATE (l)-[r:HAS_APPOINTMENT {createdAt: datetime()}]->(a)
+        RETURN a, l, r
+      `, {
+        id: appointment.appointmentId,
+        datetime: appointment.datetime,
+        email: appointment.leadEmail
+      });
     }
     
-    console.log(`Created ${scheduledAppointments.length} scheduled appointments with leads`);
+    console.log(`Created ${scheduledAppointments.length} scheduled appointments`);
     console.log('Database population completed successfully!');
     
   } catch (error) {
@@ -181,4 +145,7 @@ async function createAppointments() {
   }
 }
 
-createAppointments(); 
+// Run the script
+createAppointments()
+  .then(() => console.log('Finished creating appointments'))
+  .catch(error => console.error('Error:', error)); 

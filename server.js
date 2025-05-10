@@ -6,9 +6,31 @@ const app = express();
 require('dotenv').config();
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
-const db = require('./src/config/database');
+const { driver, config } = require('./src/config/database');
 const leadsData = require('./src/data/leads');
 const appointmentsData = require('./src/data/appointments');
+
+// Database connection tracking
+let isConnected = false;
+const dbName = config.database;
+
+// Test database connection
+async function testConnection() {
+  const session = driver.session({ database: dbName });
+  try {
+    await session.run('RETURN 1');
+    isConnected = true;
+    console.log('Database connection successful');
+  } catch (error) {
+    isConnected = false;
+    console.error('Database connection failed:', error);
+  } finally {
+    await session.close();
+  }
+}
+
+// Call testConnection immediately
+testConnection();
 
 // Set port consistently
 const PORT = 3001;
@@ -85,64 +107,9 @@ const storage = {
   errors: []
 };
 
-// Initialize Neo4j driver
-const uri = process.env.NEO4J_URI || 'bolt://localhost:7687';
-const user = process.env.NEO4J_USER || 'neo4j';
-const password = process.env.NEO4J_PASSWORD || 'MillerHouse123!';
-const dbName = 'MillerHouse';
-
-let driver = null;
-let isConnected = false;
-let connectionError = null;
-
-// Initialize Neo4j driver with better error handling
-async function initializeDriver() {
-  try {
-    console.log('Attempting to connect to Neo4j...');
-    console.log('URI:', uri);
-    console.log('User:', user);
-    console.log('Database:', dbName);
-    
-    driver = neo4j.driver(uri, neo4j.auth.basic(user, password), {
-      encrypted: false,
-      trust: 'TRUST_ALL_CERTIFICATES',
-      maxConnectionPoolSize: 50,
-      connectionTimeout: 30000,
-      maxRetryTime: 30000,
-      retryDelay: 1000,
-      maxRetries: 3
-    });
-    
-    // Test the connection
-    const session = driver.session({ database: dbName });
-    try {
-      await session.run('RETURN 1');
-      console.log('Neo4j connection test successful');
-      isConnected = true;
-      connectionError = null;
-    } catch (error) {
-      console.error('Neo4j connection test failed:', error.message);
-      isConnected = false;
-      connectionError = error;
-      throw error;
-    } finally {
-      await session.close();
-    }
-  } catch (error) {
-    console.error('Neo4j connection error:', error);
-    isConnected = false;
-    connectionError = error;
-    throw error; // Re-throw to halt initialization
-  }
-}
-
 // Helper function to handle database operations without fallback
 async function executeWithSession(operation) {
-  if (!isConnected || !driver) {
-    throw new Error('Database not connected');
-  }
-
-  const session = driver.session({ database: dbName });
+  const session = driver.session({ database: config.database });
   try {
     return await operation(session);
   } catch (error) {
@@ -159,7 +126,7 @@ async function executeWithSession(operation) {
 // Initialize database schema and constraints
 async function initializeDatabase() {
   console.log('Setting up database schema...');
-  const session = driver.session({ database: dbName });
+  const session = driver.session({ database: config.database });
   try {
     // Create constraints and indexes for Lead nodes
     await session.run(`
@@ -174,7 +141,7 @@ async function initializeDatabase() {
       CREATE CONSTRAINT IF NOT EXISTS FOR (a:Appointment) REQUIRE a.id IS UNIQUE
     `);
     await session.run(`
-      CREATE INDEX IF NOT EXISTS FOR (a:Appointment) ON (a.date, a.time)
+      CREATE INDEX IF NOT EXISTS FOR (a:Appointment) ON (a.datetime)
     `);
     await session.run(`
       CREATE INDEX IF NOT EXISTS FOR (a:Appointment) ON (a.status)
@@ -196,7 +163,7 @@ async function initializeDatabase() {
       MATCH (s:Salesman) RETURN count(s) as count
     `);
     
-    const salesmenCount = salesmenResult.records[0].get('count').low;
+    const salesmenCount = salesmenResult.records[0].get('count').low || 0;
     console.log(`Found ${salesmenCount} existing salesmen in database`);
     
     if (salesmenCount === 0) {
@@ -207,41 +174,16 @@ async function initializeDatabase() {
           id: $id1,
           name: 'John Smith',
           email: 'john@millerhouse.com',
-          phone: '555-123-4567',
           priority: 1,
-          status: 'active',
           createdAt: datetime()
         })
       `, { id1: uuidv4() });
       
-      await session.run(`
-        CREATE (s:Salesman {
-          id: $id2,
-          name: 'Sarah Johnson',
-          email: 'sarah@millerhouse.com',
-          phone: '555-234-5678',
-          priority: 2,
-          status: 'active',
-          createdAt: datetime()
-        })
-      `, { id2: uuidv4() });
-      
-      await session.run(`
-        CREATE (s:Salesman {
-          id: $id3,
-          name: 'Michael Brown',
-          email: 'michael@millerhouse.com',
-          phone: '555-345-6789',
-          priority: 3,
-          status: 'active',
-          createdAt: datetime()
-        })
-      `, { id3: uuidv4() });
-      
-      console.log('Default salesmen created');
+      console.log('Default salesmen created successfully');
     }
-    
-    console.log('Database schema setup complete');
+  } catch (error) {
+    console.error('Error initializing database:', error);
+    throw error;
   } finally {
     await session.close();
   }
@@ -249,72 +191,50 @@ async function initializeDatabase() {
 
 // Initialize appointments in Neo4j
 async function initializeAppointments() {
-  const session = driver.session({ database: dbName });
-  try {
-    // First check if appointments already exist
-    const existingResult = await session.run(`
-      MATCH (a:Appointment)
-      RETURN count(a) as count
-    `);
-    
-    const existingCount = existingResult.records[0].get('count').low;
-    
-    if (existingCount > 0) {
-      console.log(`Found ${existingCount} existing appointments, skipping initialization`);
+  if (!isConnected) {
+    console.error('Cannot initialize appointments: Database not connected');
       return;
     }
     
+  const session = driver.session({ database: dbName });
+  try {
     // Create appointments for the next 14 days
-    const today = new Date();
-    const batchSize = 10; // Process in batches for better performance
-    const totalDays = 14;
+    const now = new Date();
+    const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
     
-    for (let batchStart = 0; batchStart < totalDays; batchStart += batchSize) {
-      const batch = [];
-      const batchEnd = Math.min(batchStart + batchSize, totalDays);
+    // Create appointments for each day
+    for (let date = new Date(now); date <= twoWeeksFromNow; date.setDate(date.getDate() + 1)) {
+      // Skip weekends
+      if (date.getDay() === 0 || date.getDay() === 6) continue;
       
-      for (let i = batchStart; i < batchEnd; i++) {
-        const date = new Date(today);
-        date.setDate(today.getDate() + i);
-        const formattedDate = date.toISOString().split('T')[0];
+      // Create appointments for each time slot
+      for (let hour = 9; hour <= 17; hour++) {
+        const appointmentDateTime = new Date(date);
+        appointmentDateTime.setHours(hour, 0, 0, 0);
         
-        // Morning appointment (9 AM)
-        batch.push({
-          id: `morning-${i}`,
-          date: formattedDate,
-          time: '09:00',
-          status: 'available',
-          type: 'Morning'
-        });
+        // Skip if the appointment is in the past
+        if (appointmentDateTime < now) continue;
         
-        // Afternoon appointment (2 PM)
-        batch.push({
-          id: `afternoon-${i}`,
-          date: formattedDate,
-          time: '14:00',
-          status: 'available',
-          type: 'Afternoon'
+        const appointmentId = uuidv4();
+        
+        // Store datetime in UTC
+      await session.run(`
+          MERGE (a:Appointment {datetime: datetime($datetime)})
+          ON CREATE SET a += {
+            id: $id,
+            status: 'available',
+          createdAt: datetime()
+          }
+        `, {
+          datetime: appointmentDateTime.toISOString(),
+          id: appointmentId
         });
       }
-      
-      // Use UNWIND for batch processing
-      await session.run(`
-        UNWIND $appointments AS appt
-        CREATE (a:Appointment {
-          id: appt.id,
-          date: date(appt.date),
-          time: appt.time,
-          status: appt.status,
-          type: appt.type,
-          createdAt: datetime()
-        })
-      `, { appointments: batch });
     }
     
-    console.log('Successfully initialized appointments in Neo4j');
+    console.log('Appointments initialized successfully');
   } catch (error) {
     console.error('Error initializing appointments:', error);
-    throw error;
   } finally {
     await session.close();
   }
@@ -346,46 +266,35 @@ async function initializeSalesmanAppointments() {
       `);
       
       if (salesmenResult.records.length === 0) {
-        console.log('No active salesmen found, skipping appointment assignment');
-        return;
+        // Create default salesman if none exist
+        const defaultSalesmanId = uuidv4();
+        await session.run(`
+          CREATE (s:Salesman {
+            id: $id,
+            name: 'Jay',
+            email: 'jay@millerhouse.com',
+            phone: '555-123-4567',
+            priority: 1,
+            status: 'active',
+            createdAt: datetime()
+          })
+          RETURN s
+        `, { id: defaultSalesmanId });
+        
+        console.log('Created default salesman Jay');
       }
       
-      // Distribute appointments among salesmen in a round-robin fashion with priority
-      console.log('Linking appointments to salesmen based on priority...');
-      
-      const salesmen = salesmenResult.records.map(record => record.get('s').properties);
-      
-      // Get unlinked appointments
-      const appointmentsResult = await session.run(`
+      // Link all unassigned appointments to Jay
+      await session.run(`
         MATCH (a:Appointment)
         WHERE NOT EXISTS { (s:Salesman)-[:OFFERS_APPOINTMENT]->(a) }
-        RETURN a
-        ORDER BY a.date, a.time
+        WITH a
+        MATCH (s:Salesman {name: 'Jay'})
+        MERGE (s)-[r:OFFERS_APPOINTMENT {createdAt: datetime()}]->(a)
+        RETURN count(r) as relationshipsCreated
       `);
       
-      const appointments = appointmentsResult.records.map(record => record.get('a').properties);
-      
-      // Link each appointment to a salesman based on round-robin with priority
-      let salesmanIndex = 0;
-      for (const appointment of appointments) {
-        const salesman = salesmen[salesmanIndex % salesmen.length];
-        
-        await session.run(`
-          MATCH (s:Salesman {id: $salesmanId})
-          MATCH (a:Appointment {id: $appointmentId})
-          CREATE (s)-[r:OFFERS_APPOINTMENT {createdAt: datetime()}]->(a)
-          RETURN s, r, a
-        `, { 
-          salesmanId: salesman.id, 
-          appointmentId: appointment.id 
-        });
-        
-        console.log(`Linked appointment ${appointment.id} to salesman ${salesman.name}`);
-        
-        salesmanIndex++;
-      }
-      
-      console.log(`Finished linking ${appointments.length} appointments to salesmen`);
+      console.log('Assigned all unlinked appointments to Jay');
     } else {
       console.log('All appointments are already linked to salesmen');
     }
@@ -394,64 +303,98 @@ async function initializeSalesmanAppointments() {
   }
 }
 
-// Initialize the application with better error handling
-async function initializeApp() {
+// Add this new function to clean up past appointments
+async function cleanupPastAppointments() {
+  console.log('Cleaning up past appointments...');
+  const session = driver.session({ database: dbName });
   try {
-    console.log('Starting application initialization...');
-    await initializeDriver();
-    
-    // Check Neo4j connection
-    try {
-      await executeWithSession(async (session) => {
-        const result = await session.run('RETURN 1');
-        console.log('Neo4j connection test successful');
-        isConnected = true;
-        connectionError = null;
-      });
-      
-      if (isConnected) {
-        console.log('Connected to Neo4j, initializing database...');
-        await initializeDatabase();
-        await executeWithSession(async (session) => {
-          const result = await session.run('RETURN 1');
-          console.log('Neo4j connection test successful');
-          isConnected = true;
-          connectionError = null;
-        });
-        await initializeAppointments();
-        await initializeSalesmanAppointments();
-        
-        // Check for existing leads
-        const session = driver.session({ database: dbName });
-        try {
-          const result = await session.run('MATCH (l:Lead) RETURN count(l) as count');
-          const count = result.records[0].get('count').low;
-          console.log(`Found ${count} existing leads in database`);
-        } finally {
-          await session.close();
-        }
-      } else {
-        console.error('Failed to connect to Neo4j');
-      }
-    } catch (error) {
-      console.error('Error during initialization:', error);
-      isConnected = false;
+    const now = new Date();
+    const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
+    console.log('Current time:', now.toISOString());
+    console.log('Two hours from now:', twoHoursFromNow.toISOString());
+
+    // First, get all appointments that are in the past
+    const result = await session.run(`
+      MATCH (a:Appointment)
+      WHERE datetime(a.datetime) < datetime($minDateTime)
+      RETURN a
+    `, {
+      minDateTime: twoHoursFromNow.toISOString()
+    });
+
+    const appointmentsToDelete = result.records.map(record => record.get('a').properties);
+    console.log(`Found ${appointmentsToDelete.length} appointments to delete`);
+
+    // Delete each past appointment
+    for (const appointment of appointmentsToDelete) {
+      await session.run(`
+        MATCH (a:Appointment {id: $id})
+        DETACH DELETE a
+      `, { id: appointment.id });
     }
+
+    console.log(`Cleaned up ${appointmentsToDelete.length} past appointments`);
   } catch (error) {
-    console.error('Critical error during application startup:', error);
-    isConnected = false;
+    console.error('Error cleaning up past appointments:', error);
+  } finally {
+    await session.close();
   }
+}
+
+// Function to clean up duplicate salesmen
+async function cleanupSalesmen() {
+  console.log('Cleaning up salesmen...');
+  const session = driver.session({ database: dbName });
   
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT} (accessible at http://localhost:${PORT})`);
-    console.log(`Neo4j connection status: ${isConnected ? 'Connected' : 'Disconnected'}`);
-    if (connectionError) {
-      console.error('Last connection error:', connectionError.message);
-    }
-  });
+  try {
+    // First, delete all salesmen
+    await session.run(`
+      MATCH (s:Salesman)
+      DETACH DELETE s
+    `);
+    
+    // Create a single Jay entry
+    await session.run(`
+      CREATE (s:Salesman {
+        id: $id,
+        name: 'Jay',
+        email: 'jay@millerhouse.com',
+        phone: '555-123-4567',
+        priority: 1,
+        status: 'active',
+        createdAt: datetime()
+      })
+    `, { id: uuidv4() });
+    
+    console.log('Salesmen cleanup complete - only Jay remains');
+  } catch (error) {
+    console.error('Error cleaning up salesmen:', error);
+  } finally {
+    await session.close();
+  }
 }
 
 // Start the application
+async function initializeApp() {
+  try {
+    console.log('Starting application initialization...');
+    await initializeDatabase();
+    await cleanupSalesmen();
+    await initializeAppointments();
+    await initializeSalesmanAppointments();
+    await cleanupPastAppointments();
+    console.log('Database initialization complete');
+    
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT} (accessible at http://localhost:${PORT})`);
+    });
+  } catch (error) {
+    console.error('Critical error during application startup:', error);
+    process.exit(1);
+  }
+}
+
 initializeApp();
 
 const getEmailTemplate = (leadData, appointmentDetails) => {
@@ -461,8 +404,7 @@ const getEmailTemplate = (leadData, appointmentDetails) => {
       
       <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
         <h3 style="color: #2d3748;">Your Appointment Details:</h3>
-        <p><strong>Date:</strong> ${appointmentDetails.date}</p>
-        <p><strong>Time:</strong> ${appointmentDetails.time}</p>
+        <p><strong>Date:</strong> ${appointmentDetails.datetime}</p>
       </div>
 
       <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -519,8 +461,7 @@ const getEmailTemplate = (leadData, appointmentDetails) => {
     Thank you for scheduling your consultation!
 
     Your Appointment Details:
-    Date: ${appointmentDetails.date}
-    Time: ${appointmentDetails.time}
+    Date: ${appointmentDetails.datetime}
 
     Pre-Consultation Questionnaire:
     Please review and prepare answers to the following questions:
@@ -848,28 +789,27 @@ app.post('/api/leads', async (req, res) => {
       // Create new lead
       const leadId = uuidv4();
       const result = await session.run(`
-        CREATE (l:Lead {
+        MERGE (l:Lead {email: $email})
+        ON CREATE SET l += {
           id: $id,
           name: $name,
-          email: $email,
           phone: $phone,
-          state: $state,
-          squareFootage: $squareFootage,
-          financingStatus: $financingStatus,
-          qualificationScore: $qualificationScore,
-          status: 'new',
+          service: $service,
           createdAt: datetime()
-        })
+        }
+        ON MATCH SET l += {
+          name: $name,
+          phone: $phone,
+          service: $service,
+          updatedAt: datetime()
+        }
         RETURN l
       `, { 
         id: leadId,
         name,
         email,
         phone,
-        state: state || '',
-        squareFootage: squareFootage || 0,
-        financingStatus: financingStatus || '',
-        qualificationScore: qualificationScore || 0
+        service
       });
       
       const newLead = result.records[0].get('l').properties;
@@ -1224,136 +1164,71 @@ app.post('/api/salesmen', async (req, res) => {
   }
 });
 
-// Add API endpoints for managing salesman availability
+// API endpoint for updating salesman availability
 app.post('/api/salesmen/:id/availability', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { date, timeSlots } = req.body;
+    const { datetime, timeSlots } = req.body;
     
-    if (!date || !timeSlots || !Array.isArray(timeSlots)) {
+    if (!datetime || !timeSlots || !Array.isArray(timeSlots) || timeSlots.length === 0) {
       return res.status(400).json({ 
         success: false, 
         error: 'Missing required fields',
-        details: 'Date and timeSlots array are required'
-      });
-    }
-    
-    if (!isConnected) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Database not connected',
-        message: 'Cannot update availability without database connection'
+        message: 'Datetime and timeSlots array are required'
       });
     }
     
     const session = driver.session({ database: dbName });
     try {
-      // Check if salesman exists
-      const checkResult = await session.run(
-        'MATCH (s:Salesman {id: $id}) RETURN s',
-        { id }
-      );
-      
-      if (checkResult.records.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: 'Salesman not found',
-          message: 'No salesman found with the provided ID'
-        });
-      }
-      
-      // Create or update appointments for each time slot
-      const createdAppointments = [];
-      
       for (const timeSlot of timeSlots) {
-        // Check if appointment already exists for this date/time
-        const existingResult = await session.run(`
-          MATCH (a:Appointment {date: $date, time: $timeSlot})
+        const appointmentDateTime = new Date(`${datetime}T${timeSlot}`);
+        
+        // Check if appointment already exists
+        const checkResult = await session.run(`
+          MATCH (a:Appointment)
+          WHERE datetime(a.datetime) = datetime($datetime)
           RETURN a
-        `, { 
-          date,
-          timeSlot 
-        });
+        `, { datetime: appointmentDateTime.toISOString() });
         
-        let appointmentId;
-        
-        if (existingResult.records.length > 0) {
-          // Appointment already exists, get its ID
-          appointmentId = existingResult.records[0].get('a').properties.id;
-          
-          // Check if this salesman already offers this appointment
-          const relationshipResult = await session.run(`
-            MATCH (s:Salesman {id: $salesmanId})-[r:OFFERS_APPOINTMENT]->(a:Appointment {id: $appointmentId})
-            RETURN r
-          `, { 
-            salesmanId: id,
-            appointmentId 
-          });
-          
-          if (relationshipResult.records.length === 0) {
-            // Create relationship if it doesn't exist
-            await session.run(`
-              MATCH (s:Salesman {id: $salesmanId})
-              MATCH (a:Appointment {id: $appointmentId})
-              CREATE (s)-[r:OFFERS_APPOINTMENT {createdAt: datetime()}]->(a)
-              RETURN s, r, a
-            `, { 
-              salesmanId: id,
-              appointmentId 
-            });
-          }
-        } else {
+        if (checkResult.records.length === 0) {
           // Create new appointment
-          appointmentId = uuidv4();
-          
           await session.run(`
             CREATE (a:Appointment {
               id: $id,
-              date: $date,
-              time: $timeSlot,
+              datetime: datetime($datetime),
               status: 'available',
               createdAt: datetime()
             })
-            RETURN a
-          `, { 
-            id: appointmentId,
-            date,
-            timeSlot 
-          });
-          
-          // Create relationship between salesman and appointment
-          await session.run(`
+            WITH a
             MATCH (s:Salesman {id: $salesmanId})
-            MATCH (a:Appointment {id: $appointmentId})
-            CREATE (s)-[r:OFFERS_APPOINTMENT {createdAt: datetime()}]->(a)
-            RETURN s, r, a
-          `, { 
-            salesmanId: id,
-            appointmentId 
+            MERGE (s)-[r:OFFERS_APPOINTMENT {createdAt: datetime()}]->(a)
+          `, {
+            id: uuidv4(),
+            datetime: appointmentDateTime.toISOString(),
+            salesmanId: req.params.id
+          });
+        } else {
+          // Appointment exists, just link it to the salesman if not already linked
+          await session.run(`
+            MATCH (a:Appointment)
+            WHERE datetime(a.datetime) = datetime($datetime)
+            MATCH (s:Salesman {id: $salesmanId})
+            MERGE (s)-[r:OFFERS_APPOINTMENT {createdAt: datetime()}]->(a)
+          `, {
+            datetime: appointmentDateTime.toISOString(),
+            salesmanId: req.params.id
           });
         }
-        
-        createdAppointments.push({
-          id: appointmentId,
-          date,
-          time: timeSlot,
-          salesmanId: id
-        });
       }
       
-      return res.json({ 
-        success: true, 
-        data: createdAppointments,
-        message: 'Salesman availability updated successfully'
-      });
+      res.json({ success: true });
     } finally {
       await session.close();
     }
   } catch (error) {
-    console.error('Error updating salesman availability:', error);
-    return res.status(500).json({ 
+    console.error('Error updating availability:', error);
+    res.status(500).json({ 
       success: false, 
-      error: 'Failed to update salesman availability',
+      error: 'Failed to update availability',
       details: error.message
     });
   }
@@ -1364,61 +1239,131 @@ app.post('/api/salesmen/:id/availability', async (req, res) => {
 // API endpoint for getting appointments
 app.get('/api/appointments', async (req, res) => {
   try {
-    const result = await executeWithSession(async (session) => {
-      const query = `
+    const session = driver.session({ database: dbName });
+    try {
+      const { status } = req.query;
+      const now = new Date();
+      const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+      
+      let query = `
         MATCH (a:Appointment)
-        OPTIONAL MATCH (l:Lead)-[r:HAS_APPOINTMENT]->(a)
-        OPTIONAL MATCH (s:Salesman)-[:OFFERS_APPOINTMENT]->(a)
-        WITH a, l, s
-        ORDER BY a.date, a.time
-        RETURN a, l, s
+        WHERE datetime(a.datetime) > datetime($minDateTime)
+        AND datetime(a.datetime) > datetime()
       `;
-      const result = await session.run(query);
-      return result.records.map(record => {
-        const appointment = record.get('a').properties;
-        const lead = record.get('l') ? record.get('l').properties : null;
-        const salesman = record.get('s') ? record.get('s').properties : null;
+      
+      const params = {
+        minDateTime: twoHoursFromNow.toISOString()
+      };
+      
+      if (status && status !== 'any') {
+        query += ' AND a.status = $status';
+        params.status = status;
+      }
+      
+      query += `
+        OPTIONAL MATCH (s:Salesman)-[:OFFERS_APPOINTMENT]->(a)
+        OPTIONAL MATCH (l:Lead)-[:HAS_APPOINTMENT]->(a)
+        RETURN a, l, s
+        ORDER BY a.datetime
+      `;
+
+      const result = await session.run(query, params);
+
+      const appointments = result.records.map(record => {
+        const appointment = record.get('a')?.properties || {};
+        const lead = record.get('l')?.properties || null;
+        const salesman = record.get('s')?.properties || null;
         
-        // Format Neo4j datetime object
-        if (appointment.date && typeof appointment.date === 'object') {
-          const year = appointment.date.year.low || appointment.date.year;
-          const month = (appointment.date.month.low || appointment.date.month).toString().padStart(2, '0');
-          const day = (appointment.date.day.low || appointment.date.day).toString().padStart(2, '0');
-          appointment.date = `${year}-${month}-${day}`;
+        // Format datetime for frontend
+        if (appointment.datetime && typeof appointment.datetime !== 'string') {
+          const dt = appointment.datetime;
+          const jsDate = new Date(Date.UTC(
+            dt.year.low,
+            dt.month.low - 1,
+            dt.day.low,
+            dt.hour.low,
+            dt.minute.low,
+            dt.second.low,
+            dt.nanosecond.low / 1000000
+          ));
+          
+          if (!isNaN(jsDate.getTime())) {
+            appointment.datetime = jsDate.toISOString();
+          }
         }
         
-        return {
-          a: appointment,
-          l: lead,
-          s: salesman
-        };
+        // Add lead info if available
+        if (lead) {
+          appointment.lead = lead;
+          appointment.leadId = lead.id;
+        }
+        
+        // Add salesman info if available
+        if (salesman) {
+          appointment.salesman = salesman;
+          appointment.salesmanId = salesman.id;
+        }
+        
+        return appointment;
       });
-    });
-
-    res.json({
-      success: true,
-      data: result
-    });
+      
+      console.log(`Returning ${appointments.length} appointments with status ${status || 'any'}`);
+      
+      return res.json({ 
+        success: true, 
+        data: appointments
+      });
+    } finally {
+      await session.close();
+    }
   } catch (error) {
     console.error('Error fetching appointments:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error fetching appointments'
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch appointments',
+      details: error.message
     });
   }
 });
 
-// API endpoint for updating an appointment
-app.put('/api/appointments/:id', async (req, res) => {
+// API endpoint for creating a new appointment
+app.post('/api/appointments', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { date, time, status, leadId } = req.body;
+    const { datetime, name, email, phone, service } = req.body;
     
-    if (!date || !time || !status) {
+    console.log('Received request body:', req.body);
+    
+    if (!datetime || !name || !email || !phone || !service) {
+      console.log('Missing required fields:', { datetime, name, email, phone, service });
       return res.status(400).json({ 
         success: false, 
         error: 'Missing required fields',
-        details: 'Date, time, and status are required'
+        details: 'All fields (datetime, name, email, phone, service) are required'
+      });
+    }
+    
+    // Validate datetime
+    const appointmentDateTime = new Date(datetime);
+    const now = new Date();
+    const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    
+    console.log('Server-side datetime processing:', {
+      receivedDateTime: datetime,
+      formattedDateTime: appointmentDateTime,
+      currentTime: now,
+      twoHoursFromNow: twoHoursFromNow
+    });
+    
+    if (appointmentDateTime < twoHoursFromNow) {
+      console.log('Appointment time validation failed:', {
+        appointmentDateTime,
+        twoHoursFromNow,
+        difference: twoHoursFromNow - appointmentDateTime
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid appointment time',
+        details: 'Appointments must be scheduled at least 2 hours in advance'
       });
     }
     
@@ -1426,117 +1371,158 @@ app.put('/api/appointments/:id', async (req, res) => {
       return res.status(503).json({ 
         success: false, 
         error: 'Database not connected',
-        message: 'Cannot update appointment without database connection'
+        message: 'Cannot create appointment without database connection'
       });
     }
     
     const session = driver.session({ database: dbName });
     try {
-      // Check if appointment exists
-      const checkResult = await session.run(
-        'MATCH (a:Appointment {id: $id}) RETURN a',
-        { id }
-      );
+      // Find the appointment with proper status check
+      const appointmentQuery = `
+        MATCH (a:Appointment)
+        WHERE datetime(a.datetime) = datetime($datetime) 
+        AND a.status = 'available'
+        AND NOT EXISTS((:Lead)-[:HAS_APPOINTMENT]->(a))
+        RETURN a
+        LIMIT 1`;
       
-      if (checkResult.records.length === 0) {
+      const appointmentResult = await session.run(appointmentQuery, { 
+        datetime: appointmentDateTime.toISOString()
+      });
+      
+      if (appointmentResult.records.length === 0) {
         return res.status(404).json({
           success: false,
-          error: 'Appointment not found',
-          message: 'No appointment found with the provided ID'
+          error: 'Appointment not available',
+          message: 'This appointment slot is no longer available. Please select another time.'
         });
       }
       
-      let updatedAppointment;
+      const appointmentId = appointmentResult.records[0].get('a').properties.id;
       
-      // Begin transaction to ensure all operations succeed or fail together
-      const txc = session.beginTransaction();
+      // Create or update lead
+      const leadId = uuidv4();
+      await session.run(`
+        MERGE (l:Lead {email: $email})
+        ON CREATE SET l += {
+          id: $id,
+          name: $name,
+          phone: $phone,
+          service: $service,
+          createdAt: datetime()
+        }
+        ON MATCH SET l += {
+          name: $name,
+          phone: $phone,
+          service: $service,
+          updatedAt: datetime()
+        }
+        RETURN l
+      `, {
+        id: leadId,
+        name,
+        email,
+        phone,
+        service
+      });
       
-      try {
-        // First, check if this appointment was previously booked and remove any existing relationships
-        await txc.run(`
-          MATCH (a:Appointment {id: $id})<-[r:HAS_APPOINTMENT]-()
-          DELETE r
-        `, { id });
-        
-        // Update the appointment
-        const updateResult = await txc.run(`
+      // Update appointment status and link to lead
+      await session.run(`
+        MATCH (a:Appointment {id: $appointmentId})
+        MATCH (l:Lead {email: $email})
+        SET a.status = 'booked'
+        CREATE (l)-[r:HAS_APPOINTMENT {createdAt: datetime()}]->(a)
+        RETURN a, l, r
+      `, {
+        appointmentId,
+        email
+      });
+      
+      return res.json({
+        success: true,
+        message: 'Appointment booked successfully'
+      });
+    } finally {
+      await session.close();
+    }
+  } catch (error) {
+    console.error('Error creating appointment:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to create appointment',
+      details: error.message
+    });
+  }
+});
+
+// API endpoint for updating an appointment
+app.put('/api/appointments/:id', async (req, res) => {
+  try {
+    const { datetime, status, leadId } = req.body;
+    
+    if (!datetime || !status) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        details: 'Datetime and status are required'
+      });
+    }
+
+    const session = driver.session({ database: dbName });
+    try {
+      const appointmentDateTime = new Date(datetime);
+      
+      await session.run(`
           MATCH (a:Appointment {id: $id})
-          SET a.date = date($date), 
-              a.time = $time, 
+        SET a.datetime = datetime($datetime),
               a.status = $status,
               a.updatedAt = datetime()
-          RETURN a
         `, { 
-          id,
-          date,
-          time,
+        id: req.params.id,
+        datetime: appointmentDateTime.toISOString(),
           status
         });
         
-        updatedAppointment = updateResult.records[0].get('a').properties;
-        
-        // If status is 'booked' and a leadId is provided, create a relationship
-        if (status === 'booked' && leadId) {
-          // Check if lead exists
-          const leadCheckResult = await txc.run(
-            'MATCH (l:Lead {id: $leadId}) RETURN l',
-            { leadId }
-          );
-          
-          if (leadCheckResult.records.length === 0) {
-            throw new Error('Lead not found');
-          }
-          
-          // Create relationship between lead and appointment
-          await txc.run(`
-            MATCH (l:Lead {id: $leadId})
+      if (leadId) {
+        await session.run(`
             MATCH (a:Appointment {id: $id})
-            CREATE (l)-[r:HAS_APPOINTMENT {createdAt: datetime()}]->(a)
-          `, { leadId, id });
-          
-          // Get lead details to include in response
-          const leadResult = await txc.run(`
             MATCH (l:Lead {id: $leadId})
-            RETURN l
-          `, { leadId });
-          
-          const lead = leadResult.records[0].get('l').properties;
-          updatedAppointment.lead = lead;
-          updatedAppointment.leadId = leadId;
-        }
-        
-        // Commit transaction
-        await txc.commit();
-      } catch (error) {
-        // Rollback transaction on error
-        await txc.rollback();
-        throw error;
+          MERGE (l)-[r:HAS_APPOINTMENT {createdAt: datetime()}]->(a)
+        `, {
+          id: req.params.id,
+          leadId
+        });
       }
       
-      // Format dates for frontend
-      if (updatedAppointment.date && typeof updatedAppointment.date !== 'string') {
-        updatedAppointment.date = updatedAppointment.date.toString();
+      const result = await session.run(`
+        MATCH (a:Appointment {id: $id})
+        RETURN a
+      `, { id: req.params.id });
+      
+      if (result.records.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Appointment not found'
+        });
       }
       
-      if (updatedAppointment.createdAt && typeof updatedAppointment.createdAt !== 'string') {
-        updatedAppointment.createdAt = updatedAppointment.createdAt.toString();
+      const updatedAppointment = result.records[0].get('a').properties;
+      
+      // Format datetime for frontend
+      if (updatedAppointment.datetime && typeof updatedAppointment.datetime !== 'string') {
+        updatedAppointment.datetime = updatedAppointment.datetime.toString();
       }
       
-      if (updatedAppointment.updatedAt && typeof updatedAppointment.updatedAt !== 'string') {
-        updatedAppointment.updatedAt = updatedAppointment.updatedAt.toString();
-      }
-      
-      return res.json({ 
+      res.json({
         success: true, 
-        data: updatedAppointment,
-        message: 'Appointment updated successfully'
+        data: updatedAppointment
       });
     } finally {
       await session.close();
     }
   } catch (error) {
     console.error('Error updating appointment:', error);
-    return res.status(500).json({ 
+    res.status(500).json({ 
       success: false, 
       error: 'Failed to update appointment',
       details: error.message
@@ -1635,8 +1621,6 @@ app.get('/api/salesmen/:id/appointments', async (req, res) => {
     const { id } = req.params;
     const { status } = req.query;
     
-    console.log(`Fetching appointments for salesman ${id} with status filter: ${status || 'any'}`);
-    
     if (!isConnected) {
       return res.status(503).json({ 
         success: false, 
@@ -1648,13 +1632,12 @@ app.get('/api/salesmen/:id/appointments', async (req, res) => {
     const session = driver.session({ database: dbName });
     try {
       // Check if salesman exists
-      const salesmanCheck = await session.run(
+      const salesmanResult = await session.run(
         'MATCH (s:Salesman {id: $id}) RETURN s',
         { id }
       );
       
-      if (salesmanCheck.records.length === 0) {
-        console.log(`Salesman ${id} not found`);
+      if (salesmanResult.records.length === 0) {
         return res.status(404).json({
           success: false,
           error: 'Salesman not found',
@@ -1662,35 +1645,49 @@ app.get('/api/salesmen/:id/appointments', async (req, res) => {
         });
       }
       
+      // Get appointments for this salesman
       let query = `
         MATCH (s:Salesman {id: $id})-[:OFFERS_APPOINTMENT]->(a:Appointment)
+        WHERE datetime(a.datetime) > datetime($minDateTime)
         OPTIONAL MATCH (l:Lead)-[r:HAS_APPOINTMENT]->(a)
+        WITH a, l, s
+        ORDER BY a.datetime
+        RETURN a, l, s
       `;
       
-      // Add status filter if provided
-      const params = { id };
+      const params = {
+        id,
+        minDateTime: new Date().toISOString()
+      };
+      
       if (status && status !== 'any') {
-        query += `WHERE a.status = $status\n`;
+        query += ' AND a.status = $status';
         params.status = status;
       }
       
-      // Finalize the query
-      query += `        WITH a, l
-        ORDER BY a.date, a.time
-        RETURN a, l`;
-      
-      console.log("Executing query:", query);
-      
       const result = await session.run(query, params);
-      console.log(`Query returned ${result.records.length} records for salesman ${id}`);
       
       const appointments = result.records.map(record => {
         const appointment = record.get('a').properties;
         const lead = record.get('l') ? record.get('l').properties : null;
+        const salesman = record.get('s').properties;
         
-        // Format dates for frontend
-        if (appointment.date && typeof appointment.date !== 'string') {
-          appointment.date = appointment.date.toString();
+        // Format datetime for frontend
+        if (appointment.datetime && typeof appointment.datetime !== 'string') {
+          const dt = appointment.datetime;
+          const jsDate = new Date(Date.UTC(
+            dt.year.low,
+            dt.month.low - 1,
+            dt.day.low,
+            dt.hour.low,
+            dt.minute.low,
+            dt.second.low,
+            dt.nanosecond.low / 1000000
+          ));
+          
+          if (!isNaN(jsDate.getTime())) {
+            appointment.datetime = jsDate.toISOString();
+          }
         }
         
         // Add lead info if available
@@ -1699,13 +1696,16 @@ app.get('/api/salesmen/:id/appointments', async (req, res) => {
           appointment.leadId = lead.id;
         }
         
-        // Add salesman info
-        appointment.salesmanId = id;
+        // Add salesman info if available
+        if (salesman) {
+          appointment.salesman = salesman;
+          appointment.salesmanId = salesman.id;
+        }
         
         return appointment;
       });
       
-      console.log(`Returning ${appointments.length} appointments for salesman ${id}`);
+      console.log(`Returning ${appointments.length} appointments with status ${status || 'any'}`);
       
       return res.json({ 
         success: true, 
@@ -1715,240 +1715,10 @@ app.get('/api/salesmen/:id/appointments', async (req, res) => {
       await session.close();
     }
   } catch (error) {
-    console.error('Error fetching salesman appointments:', error);
+    console.error('Error fetching appointments:', error);
     return res.status(500).json({ 
       success: false, 
-      error: 'Failed to fetch salesman appointments',
-      details: error.message
-    });
-  }
-});
-
-// API endpoint for booking an appointment
-app.post('/api/appointments', async (req, res) => {
-  try {
-    const { date, time, name, email, phone, service } = req.body;
-    
-    console.log("Received appointment creation request:", JSON.stringify(req.body));
-    console.log("Date type:", typeof date);
-    console.log("Date value:", date);
-    
-    if (!date || !time || !name || !email || !phone) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Missing required fields',
-        details: 'Date, time, name, email, and phone are required'
-      });
-    }
-    
-    if (!isConnected) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Database not connected',
-        message: 'Cannot book appointment without database connection'
-      });
-    }
-    
-    const session = driver.session({ database: dbName });
-    
-    try {
-      // Check for existing lead with this email
-      let leadId = req.body.leadId; // Allow passing leadId directly
-      
-      if (!leadId) {
-        console.log("No leadId provided, checking for existing lead by email:", email);
-        
-        const leadCheckResult = await session.run(
-          'MATCH (l:Lead {email: $email}) RETURN l',
-          { email }
-        );
-        
-        if (leadCheckResult.records.length > 0) {
-          leadId = leadCheckResult.records[0].get('l').properties.id;
-          console.log("Found existing lead:", leadId);
-        } else {
-          // Create new lead
-          leadId = uuidv4();
-          console.log("Creating new lead with ID:", leadId);
-          
-          await session.run(`
-            CREATE (l:Lead {
-              id: $id,
-              name: $name,
-              email: $email,
-              phone: $phone,
-              createdAt: datetime()
-            }) RETURN l`,
-            { 
-              id: leadId,
-              name,
-              email,
-              phone
-            }
-          );
-        }
-      }
-      
-      // Format the date properly regardless of whether it's a string or Neo4j object
-      let formattedDate;
-      
-      try {
-        console.log("Processing date:", date);
-        
-        if (typeof date === 'string') {
-          // If it's already a string, we just use it directly
-          formattedDate = date;
-          console.log("String date received:", formattedDate);
-        } else if (typeof date === 'object' && date !== null) {
-          console.log("Date is an object with properties:", Object.keys(date));
-          
-          if (date.year) {
-            // If it's a Neo4j datetime object, extract the components and format as YYYY-MM-DD
-            console.log("Neo4j date object received:", JSON.stringify(date));
-            
-            const year = date.year.low || date.year;
-            const month = (date.month.low || date.month); // Neo4j months are 1-indexed
-            const day = date.day.low || date.day;
-            
-            // Format as YYYY-MM-DD (ensure month and day are padded with leading zeros if needed)
-            formattedDate = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-            console.log("Converted date:", formattedDate);
-          } else {
-            // Handle other object types like JS Date objects
-            console.log("Date appears to be a JS Date or other object:", date);
-            formattedDate = new Date(date).toISOString().split('T')[0];
-            console.log("Converted to:", formattedDate);
-          }
-        } else {
-          console.error("Invalid date format received:", date);
-          return res.status(400).json({
-            success: false,
-            error: 'Invalid date format',
-            details: 'Date must be provided in YYYY-MM-DD format or as a valid date object'
-          });
-        }
-      } catch (error) {
-        console.error("Error processing date:", error);
-        return res.status(400).json({
-          success: false,
-          error: 'Error processing date',
-          details: error.message
-        });
-      }
-      
-      // Find the appointment - ensure we're using a string not an object for the query
-      // This ensures we won't get 'date.includes is not a function' errors
-      console.log("Searching for appointment with date:", formattedDate, "time:", time);
-      
-      if (typeof formattedDate !== 'string') {
-        console.error("Formatted date is not a string:", formattedDate);
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid date format after processing',
-          details: 'Failed to convert date to string format'
-        });
-      }
-      
-      const appointmentQuery = `
-        MATCH (a:Appointment)
-        WHERE a.date = date($date) AND a.time = $time AND a.status = 'available'
-        RETURN a
-        LIMIT 1`;
-      console.log("Executing query:", appointmentQuery, "with params:", { date: formattedDate, time });
-      
-      const appointmentResult = await session.run(appointmentQuery, { 
-        date: formattedDate,
-        time
-      });
-      
-      console.log("Query results:", appointmentResult.records.length > 0 ? "appointment found" : "no appointment found");
-      
-      if (appointmentResult.records.length === 0) {
-        // No matching appointment found
-        console.log("No available appointment found for date:", formattedDate, "time:", time);
-        return res.status(404).json({
-          success: false,
-          error: 'Appointment not available',
-          message: 'The requested time slot is no longer available'
-        });
-      }
-      
-      // Get the appointment ID
-      appointmentId = appointmentResult.records[0].get('a').properties.id;
-      console.log("Found available appointment with ID:", appointmentId);
-      
-      // Update appointment status and create relationship
-      await session.run(`
-        MATCH (a:Appointment {id: $appointmentId})
-        SET a.status = 'booked', a.updatedAt = datetime(), a.leadName = $name, a.leadEmail = $email, a.leadPhone = $phone, a.service = $service
-        RETURN a`,
-        { 
-          appointmentId,
-          name,
-          email,
-          phone,
-          service: service || 'Initial Consultation'
-        }
-      );
-      
-      // Create relationship between lead and appointment
-      await session.run(`
-        MATCH (l:Lead {id: $leadId})
-        MATCH (a:Appointment {id: $appointmentId})
-        CREATE (l)-[r:HAS_APPOINTMENT {createdAt: datetime()}]->(a)
-        RETURN l, r, a`,
-        { 
-          leadId,
-          appointmentId 
-        }
-      );
-      
-      // Send confirmation email if email service is configured
-      let emailSent = false;
-      if (transporter) {
-        try {
-          await transporter.sendMail({
-            from: `"Miller House Studio" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: 'Appointment Confirmation',
-            html: `
-              <h1>Appointment Confirmation</h1>
-              <p>Dear ${name},</p>
-              <p>Your appointment has been confirmed for ${formattedDate} at ${time}.</p>
-              <p>Service: ${service || 'Initial Consultation'}</p>
-              <p>Thank you for choosing our services!</p>
-            `
-          });
-          emailSent = true;
-        } catch (emailError) {
-          console.error('Error sending confirmation email:', emailError);
-          // Continue with appointment booking even if email fails
-        }
-      }
-      
-      return res.json({
-        success: true,
-        data: {
-          id: appointmentId,
-          date: formattedDate,
-          time,
-          name,
-          email,
-          phone,
-          service: service || 'Initial Consultation',
-          leadId
-        },
-        emailSent,
-        message: 'Appointment booked successfully'
-      });
-    } finally {
-      await session.close();
-    }
-  } catch (error) {
-    console.error('Error booking appointment:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to book appointment',
+      error: 'Failed to fetch appointments',
       details: error.message
     });
   }
@@ -1971,4 +1741,42 @@ process.on('SIGINT', async () => {
     await driver.close();
   }
   process.exit(0);
-}); 
+});
+
+async function deleteNullDateAppointments() {
+  try {
+    console.log('Cleaning up null date appointments...');
+    const session = driver.session({ database: dbName });
+    try {
+      // First delete relationships
+      const deleteRelationships = await session.run(`
+        MATCH (a:Appointment)
+        WHERE a.datetime IS NULL
+        OPTIONAL MATCH (a)-[r]-()
+        DELETE r
+        RETURN count(r) as deleted
+      `);
+      
+      const deletedRelationships = deleteRelationships.records[0].get('deleted').low;
+      console.log(`Deleted ${deletedRelationships} relationships from null date appointments`);
+      
+      // Then delete the appointments
+      const deleteAppointments = await session.run(`
+        MATCH (a:Appointment)
+        WHERE a.datetime IS NULL
+        DELETE a
+        RETURN count(a) as deleted
+      `);
+      
+      const deletedAppointments = deleteAppointments.records[0].get('deleted').low;
+      console.log(`Deleted ${deletedAppointments} null date appointments`);
+      
+      return { deletedRelationships, deletedAppointments };
+    } finally {
+      await session.close();
+    }
+  } catch (error) {
+    console.error('Error deleting null date appointments:', error);
+    throw error;
+  }
+} 
