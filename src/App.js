@@ -129,7 +129,8 @@ function App() {
     squareFootage: '',
     financingStatus: '',
     timeline: '',
-    lotStatus: ''
+    lotStatus: '',
+    service: 'Initial Consultation'
   });
   const [error, setError] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
@@ -143,6 +144,7 @@ function App() {
   const [successMessage, setSuccessMessage] = useState('');
   const [costs, setCosts] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
 
   const getQualificationStatus = (score) => {
     if (score >= 25) {
@@ -204,16 +206,23 @@ function App() {
       const appointments = response.data.data || [];
       console.log("Available appointments:", appointments);
       
-      const formattedAppointments = appointments.map(appointment => ({
-        ...appointment,
-        date: typeof appointment.date === 'object' && appointment.date.year
-          ? new Date(
-              appointment.date.year.low || appointment.date.year,
-              (appointment.date.month.low || appointment.date.month) - 1,
-              appointment.date.day.low || appointment.date.day
-            ).toISOString().split('T')[0]
-          : appointment.date
-      }));
+      const now = new Date();
+      const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+      
+      const formattedAppointments = appointments
+        .filter(appointment => {
+          // Use the timestamp if available, otherwise fall back to datetime
+          const appointmentTime = appointment.timestamp || new Date(appointment.datetime).getTime();
+          return appointmentTime >= twoHoursFromNow.getTime();
+        })
+        .sort((a, b) => {
+          // Sort by timestamp if available, otherwise by datetime
+          const timeA = a.timestamp || new Date(a.datetime).getTime();
+          const timeB = b.timestamp || new Date(b.datetime).getTime();
+          return timeA - timeB;
+        });
+      
+      console.log("Filtered appointments:", formattedAppointments);
       
       if (formattedAppointments.length === 0) {
         setError('No available appointments found. Please try again later.');
@@ -224,8 +233,7 @@ function App() {
       setAvailableAppointments(formattedAppointments);
     } catch (error) {
       console.error('Error fetching appointments:', error);
-      setError('Error checking appointment availability. Please try again.');
-      setAvailableAppointments([]);
+      setError('Failed to fetch appointments. Please try again later.');
     }
   }, []);
 
@@ -342,81 +350,78 @@ function App() {
 
   const handleScheduleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedDate || !selectedTime) {
-      setError('Please select both date and time');
-      return;
-    }
-
     setSubmitting(true);
+    setError(null);
+
     try {
-      console.log("Submitting appointment with date:", selectedDate, "time:", selectedTime);
-      
-      // Format date properly if it's a Neo4j datetime object
-      let formattedDate = selectedDate;
-      if (typeof selectedDate === 'object' && selectedDate.year) {
-        const year = selectedDate.year.low || selectedDate.year;
-        const month = (selectedDate.month.low || selectedDate.month).toString().padStart(2, '0');
-        const day = (selectedDate.day.low || selectedDate.day).toString().padStart(2, '0');
-        formattedDate = `${year}-${month}-${day}`;
-      } else if (typeof selectedDate === 'string' && selectedDate.includes('/')) {
-        // Handle MM/DD/YYYY format
-        const parts = selectedDate.split('/');
-        formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+      if (!selectedAppointment) {
+        setError('Please select an appointment time');
+        setSubmitting(false);
+        return;
       }
+
+      const appointmentDateTime = new Date(selectedAppointment.datetime);
+      const now = new Date();
+      const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
       
-      const response = await axios.post(`${API_BASE_URL}/api/appointments`, {
-        date: formattedDate,
-        time: selectedTime,
+      console.log('Selected datetime:', appointmentDateTime);
+      console.log('Current time:', now);
+      console.log('Two hours from now:', twoHoursFromNow);
+      
+      if (appointmentDateTime < twoHoursFromNow) {
+        setError('Appointments must be scheduled at least 2 hours in advance');
+        setSubmitting(false);
+        return;
+      }
+
+      // First check if the appointment is still available
+      const checkResponse = await axios.get(`${API_BASE_URL}/api/appointments?datetime=${selectedAppointment.datetime}&status=available`);
+      
+      if (!checkResponse.data.success || checkResponse.data.data.length === 0) {
+        setError('This appointment slot is no longer available. Please select another time.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Debug logging for form data
+      console.log('Current form data:', formData);
+      console.log('Selected appointment:', selectedAppointment);
+
+      const requestData = {
+        datetime: selectedAppointment.datetime,
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
-        service: 'Initial Consultation'
-      });
+        service: formData.service
+      };
+      
+      console.log('Sending request data:', requestData);
+      
+      const response = await axios.post(`${API_BASE_URL}/api/appointments`, requestData);
 
-      console.log("Appointment response:", response.data);
-
-      if (response.data) {
-        setSuccess(
-          <div className="space-y-4">
-            <h3 className="text-xl font-semibold text-green-600">Thank you for scheduling your consultation!</h3>
-            <p>We've sent a confirmation email to {formData.email} with:</p>
-            <ul className="list-disc pl-5 space-y-2">
-              <li>Your appointment details (Date: {formattedDate}, Time: {selectedTime})</li>
-              <li>Important questions to help us prepare for your consultation</li>
-              <li>What to expect during the consultation</li>
-            </ul>
-            {!response.data.emailSent && (
-              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
-                <p className="text-yellow-800">
-                  Note: While your appointment was scheduled successfully, we were unable to send the confirmation email. 
-                  Please save your appointment details or contact us if you need them.
-                </p>
-              </div>
-            )}
-            <p className="text-sm text-gray-600 mt-4">If you don't see the email, please check your spam folder.</p>
-          </div>
-        );
-        
-        // Reset state after successful submission
+      if (response.data.success) {
+        setShowSuccessMessage(true);
+        setSuccessMessage('Appointment scheduled successfully!');
         setShowScheduler(false);
-        setCurrentStep(1);
+        setSelectedAppointment(null);
         setFormData({
           name: '',
           email: '',
           phone: '',
-          state: '',
-          squareFootage: '',
-          financingStatus: '',
-          timeline: '',
-          lotStatus: '',
-          score: 0
+          service: 'Initial Consultation'
         });
-        setSelectedDate('');
-        setSelectedTime('');
+        // Refresh available appointments
+        fetchAvailableAppointments();
+      } else {
+        setError(response.data.error || 'Failed to schedule appointment');
       }
     } catch (error) {
       console.error('Error scheduling appointment:', error);
-      setError('There was an error scheduling your appointment. Please try again.');
+      if (error.response?.status === 404) {
+        setError('This appointment slot is no longer available. Please select another time.');
+      } else {
+        setError(error.response?.data?.error || 'Failed to schedule appointment');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -480,16 +485,36 @@ function App() {
         return;
       }
 
-      // Proceed to next step
-      setCurrentStep(2);
-      setShowScheduler(true);
+      // Check for existing appointments
+      const response = await axios.get(`${API_BASE_URL}/api/appointments`);
       
-      if (showModal) {
+      if (!response.data || !response.data.success) {
+        throw new Error('Invalid response from server');
+      }
+      
+      const appointments = response.data.data || [];
+      console.log("Appointments response:", appointments);
+      
+      // Check for existing appointment with this email
+      const hasExistingAppointment = appointments.some(appointment => {
+        if (!appointment || !appointment.lead) {
+          return false;
+        }
+        return appointment.lead.email.toLowerCase() === formData.email.toLowerCase();
+      });
+
+      if (hasExistingAppointment) {
+        setError('You already have an appointment scheduled. Please contact support to reschedule.');
         setShowModal(false);
+      } else {
+        setError(''); // Clear any previous errors
+        setCurrentStep(2); // Move to the next step
+        setShowScheduler(true); // Show the scheduler
+        setShowModal(false); // Hide the modal
       }
     } catch (error) {
-      console.error('Error submitting form:', error);
-      setError('Error submitting form. Please try again.');
+      console.error('Error checking appointments:', error);
+      setError('Error checking appointment availability. Please try again.');
     }
   };
 
@@ -800,61 +825,48 @@ function App() {
             <form onSubmit={handleScheduleSubmit}>
               <div className="mb-4">
                 <label className="block text-gray-700 text-sm font-bold mb-2">
+                  Service Type
+                </label>
+                <select
+                  name="service"
+                  value={formData.service}
+                  onChange={handleInputChange}
+                  className="w-full p-2 border rounded"
+                  required
+                >
+                  <option value="Initial Consultation">Initial Consultation</option>
+                  <option value="Design Review">Design Review</option>
+                  <option value="Construction Planning">Construction Planning</option>
+                  <option value="Project Management">Project Management</option>
+                </select>
+              </div>
+              <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2">
                   Available Appointments
                 </label>
                 {availableAppointments.length > 0 ? (
                   <div className="max-h-60 overflow-y-auto border rounded">
                     {availableAppointments.map((appointment) => (
                       <div
-                        key={`${appointment.id}`}
-                        className={`p-3 cursor-pointer hover:bg-gray-100 ${
-                          selectedDate === appointment.date && selectedTime === appointment.time
-                            ? 'bg-blue-100'
-                            : ''
+                        key={appointment.id}
+                        className={`p-4 border rounded-lg cursor-pointer ${
+                          selectedAppointment?.id === appointment.id
+                            ? 'bg-blue-100 border-blue-500'
+                            : 'hover:bg-gray-50'
                         }`}
                         onClick={() => {
                           console.log("Selected appointment:", appointment);
-                          // Handle Neo4j datetime object
-                          let appointmentDate = appointment.date;
-                          if (typeof appointmentDate === 'object' && appointmentDate.year) {
-                            const year = appointmentDate.year.low || appointmentDate.year;
-                            const month = (appointmentDate.month.low || appointmentDate.month).toString().padStart(2, '0');
-                            const day = (appointmentDate.day.low || appointmentDate.day).toString().padStart(2, '0');
-                            appointmentDate = `${year}-${month}-${day}`;
-                          }
-                          setSelectedDate(appointmentDate);
-                          setSelectedTime(appointment.time);
+                          setSelectedAppointment(appointment);
                         }}
                       >
                         <div className="font-medium">
-                          {typeof appointment.date === 'object' && appointment.date.year ? 
-                            new Date(
-                              appointment.date.year.low || appointment.date.year,
-                              (appointment.date.month.low || appointment.date.month) - 1,
-                              appointment.date.day.low || appointment.date.day
-                            ).toLocaleDateString('en-US', {
-                              weekday: 'long',
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric',
-                            })
-                            : new Date(appointment.date).toLocaleDateString('en-US', {
-                              weekday: 'long',
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric',
-                            })}
-                        </div>
-                        <div className="text-gray-600">
-                          {appointment.time}
+                          {new Date(appointment.datetime).toLocaleString()}
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="p-4 text-center text-gray-500 border rounded">
-                    No appointments available. Please try again later.
-                  </div>
+                  <div className="text-gray-500">No available appointments found.</div>
                 )}
               </div>
               {error && <div className="text-red-500 mb-4">{error}</div>}
@@ -871,9 +883,9 @@ function App() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!selectedDate || !selectedTime || submitting}
+                  disabled={!selectedAppointment || submitting}
                   className={`px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 ${
-                    (!selectedDate || !selectedTime || submitting) && 'opacity-50 cursor-not-allowed'
+                    (!selectedAppointment || submitting) && 'opacity-50 cursor-not-allowed'
                   }`}
                 >
                   {submitting ? 'Scheduling...' : 'Schedule Appointment'}

@@ -15,15 +15,13 @@ async function createAppointment(appointment) {
           `CREATE (a:Appointment {
             id: $id,
             leadId: $leadId,
-            date: $date,
-            time: $time,
+            datetime: datetime($datetime),
             status: $status
           }) RETURN a`,
           {
             id: appointment.id,
             leadId: appointment.leadId,
-            date: appointment.date,
-            time: appointment.time,
+            datetime: appointment.datetime,
             status: appointment.status
           }
         );
@@ -47,8 +45,41 @@ async function getAppointments() {
     if (isConnected) {
       const session = driver.session({ database: dbName });
       try {
-        const result = await session.run('MATCH (a:Appointment) RETURN a');
-        return result.records.map(record => record.get('a').properties);
+        const now = new Date();
+        const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+        
+        const result = await session.run(`
+          MATCH (a:Appointment)
+          WHERE datetime(a.datetime) > datetime($minDateTime)
+          AND datetime(a.datetime) > datetime()
+          RETURN a
+          ORDER BY a.datetime
+        `, { minDateTime: twoHoursFromNow.toISOString() });
+        
+        return result.records.map(record => {
+          const appointment = record.get('a').properties;
+          
+          // Convert Neo4j DateTime to JavaScript Date
+          if (appointment.datetime) {
+            const dt = appointment.datetime;
+            const jsDate = new Date(Date.UTC(
+              dt.year.low,
+              dt.month.low - 1,
+              dt.day.low,
+              dt.hour.low,
+              dt.minute.low,
+              dt.second.low,
+              dt.nanosecond.low / 1000000
+            ));
+            
+            if (!isNaN(jsDate.getTime())) {
+              appointment.datetime = jsDate.toISOString();
+              appointment.timestamp = jsDate.getTime();
+            }
+          }
+          
+          return appointment;
+        });
       } finally {
         await session.close();
       }
@@ -66,10 +97,12 @@ async function getAppointmentsByLeadId(leadId) {
     if (isConnected) {
       const session = driver.session({ database: dbName });
       try {
-        const result = await session.run(
-          'MATCH (a:Appointment {leadId: $leadId}) RETURN a',
-          { leadId }
-        );
+        const result = await session.run(`
+          MATCH (l:Lead {id: $leadId})-[:HAS_APPOINTMENT]->(a:Appointment)
+          WHERE datetime(a.datetime) > datetime()
+          RETURN a
+          ORDER BY a.datetime
+        `, { leadId });
         return result.records.map(record => record.get('a').properties);
       } finally {
         await session.close();
@@ -88,10 +121,12 @@ async function updateAppointmentStatus(id, status) {
     if (isConnected) {
       const session = driver.session({ database: dbName });
       try {
-        const result = await session.run(
-          'MATCH (a:Appointment {id: $id}) SET a.status = $status RETURN a',
-          { id, status }
-        );
+        const result = await session.run(`
+          MATCH (a:Appointment {id: $id})
+          SET a.status = $status,
+              a.updatedAt = datetime()
+          RETURN a
+        `, { id, status });
         return result.records[0].get('a').properties;
       } finally {
         await session.close();
@@ -113,59 +148,79 @@ async function updateAppointmentStatus(id, status) {
 }
 
 // Check if a time slot is available
-async function isTimeSlotAvailable(date, time) {
-  if (isConnected) {
-    try {
-      return await executeQuery(async (session) => {
-        const result = await session.run(
-          'MATCH (a:Appointment {date: $date, time: $time}) RETURN count(a) as count',
-          { date, time }
-        );
-        return result.records[0].get('count').toNumber() === 0;
-      });
-    } catch (error) {
-      console.error('Failed to check time slot availability in Neo4j:', error);
-      return !appointments.some(app => app.date === date && app.time === time);
+async function isTimeSlotAvailable(datetime) {
+  try {
+    if (isConnected) {
+      const session = driver.session({ database: dbName });
+      try {
+        const result = await session.run(`
+          MATCH (a:Appointment)
+          WHERE datetime(a.datetime) = datetime($datetime)
+          AND a.status = 'available'
+          AND NOT EXISTS((:Lead)-[:HAS_APPOINTMENT]->(a))
+          RETURN count(a) as count
+        `, { datetime });
+        return result.records[0].get('count').low > 0;
+      } finally {
+        await session.close();
+      }
     }
+    return !appointments.some(a => 
+      a.datetime === datetime && 
+      (a.status !== 'available' || a.leadId)
+    );
+  } catch (error) {
+    console.error('Error checking time slot availability:', error);
+    return !appointments.some(a => 
+      a.datetime === datetime && 
+      (a.status !== 'available' || a.leadId)
+    );
   }
-  return !appointments.some(app => app.date === date && app.time === time);
 }
 
 // Initialize mock appointments
-function initializeMockAppointments() {
-  if (appointments.length === 0) {
-    const today = new Date();
-    const mockLeads = [
-      { id: 'lead1', name: 'John Doe', email: 'john@example.com' },
-      { id: 'lead2', name: 'Jane Smith', email: 'jane@example.com' }
-    ];
-
-    // Create appointments for the next 14 days
-    for (let i = 0; i < 14; i++) {
-      const date = new Date(today);
-      date.setDate(date.getDate() + i);
-      const dateStr = date.toISOString().split('T')[0];
-
-      // Morning appointment
-      appointments.push({
-        id: uuidv4(),
-        leadId: mockLeads[0].id,
-        date: dateStr,
-        time: '09:00',
-        status: 'scheduled',
-        createdAt: new Date().toISOString()
-      });
-
-      // Afternoon appointment
-      appointments.push({
-        id: uuidv4(),
-        leadId: mockLeads[1].id,
-        date: dateStr,
-        time: '14:00',
-        status: 'scheduled',
-        createdAt: new Date().toISOString()
-      });
+async function initializeMockAppointments() {
+  try {
+    if (isConnected) {
+      const session = driver.session({ database: dbName });
+      try {
+        // Create appointments for the next 14 days
+        const now = new Date();
+        const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+        
+        for (let date = new Date(now); date <= twoWeeksFromNow; date.setDate(date.getDate() + 1)) {
+          // Skip weekends
+          if (date.getDay() === 0 || date.getDay() === 6) continue;
+          
+          // Create appointments for each time slot
+          for (let hour = 9; hour <= 17; hour++) {
+            const appointmentDateTime = new Date(date);
+            appointmentDateTime.setHours(hour, 0, 0, 0);
+            
+            // Skip if the appointment is in the past
+            if (appointmentDateTime < now) continue;
+            
+            await session.run(`
+              MERGE (a:Appointment {datetime: datetime($datetime)})
+              ON CREATE SET a += {
+                id: $id,
+                status: 'available',
+                createdAt: datetime()
+              }
+            `, {
+              datetime: appointmentDateTime.toISOString(),
+              id: uuidv4()
+            });
+          }
+        }
+        
+        console.log('Mock appointments initialized successfully');
+      } finally {
+        await session.close();
+      }
     }
+  } catch (error) {
+    console.error('Error initializing mock appointments:', error);
   }
 }
 

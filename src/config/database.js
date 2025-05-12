@@ -3,74 +3,62 @@ require('dotenv').config();
 
 // Database configuration
 const config = {
-  uri: process.env.NEO4J_URI || 'bolt://localhost:7687',
-  user: process.env.NEO4J_USER || 'neo4j',
+  uri: process.env.NEO4J_URI,
+  user: process.env.NEO4J_USER,
   password: process.env.NEO4J_PASSWORD,
-  database: process.env.NEO4J_DATABASE || 'MillerHouse',
-  maxConnectionPoolSize: 50,
-  connectionTimeout: 30000, // 30 seconds
-  maxRetryTime: 30000, // 30 seconds
-  retryDelay: 1000, // 1 second
-  maxRetries: 3
+  database: process.env.NEO4J_DATABASE,
+  options: {
+    maxConnectionPoolSize: 50,
+    maxConnectionLifetime: 3 * 60 * 60 * 1000, // 3 hours
+    connectionAcquisitionTimeout: 60 * 1000, // 60 seconds
+    connectionTimeout: 30 * 1000, // 30 seconds
+    maxTransactionRetryTime: 30 * 1000, // 30 seconds
+    encrypted: false // Disable encryption for local development
+  }
 };
-
-// Connection pool
-let driver = null;
-let isConnected = false;
-let connectionError = null;
 
 // Initialize the Neo4j driver
 function initializeDriver() {
   try {
-    driver = neo4j.driver(
+    const driver = neo4j.driver(
       config.uri,
       neo4j.auth.basic(config.user, config.password),
-      {
-        encrypted: 'ENCRYPTION_OFF',
-        trust: 'TRUST_ALL_CERTIFICATES',
-        maxConnectionPoolSize: config.maxConnectionPoolSize,
-        connectionTimeout: config.connectionTimeout,
-        maxRetryTime: config.maxRetryTime,
-        retryDelay: config.retryDelay,
-        maxRetries: config.maxRetries
-      }
+      config.options
     );
     console.log('Neo4j driver initialized successfully');
-    return true;
+    return driver;
   } catch (error) {
     console.error('Failed to initialize Neo4j driver:', error);
-    return false;
+    throw error;
   }
 }
 
 // Test the connection
-async function testConnection() {
+async function testConnection(driver) {
   if (!driver) {
     console.log('Driver not initialized');
     return false;
   }
 
   try {
-    const session = driver.session();
+    const session = driver.session({ database: config.database });
     await session.run('RETURN 1');
     await session.close();
-    isConnected = true;
     console.log('Neo4j connection test successful');
     return true;
   } catch (error) {
     console.error('Neo4j connection test failed:', error);
-    isConnected = false;
     return false;
   }
 }
 
 // Execute a query with proper session handling
-async function executeQuery(queryFn) {
+async function executeQuery(driver, queryFn) {
   if (!driver) {
     throw new Error('Neo4j driver not initialized');
   }
 
-  const session = driver.session();
+  const session = driver.session({ database: config.database });
   try {
     const result = await queryFn(session);
     return result;
@@ -80,7 +68,7 @@ async function executeQuery(queryFn) {
 }
 
 // Close the driver connection
-async function closeDriver() {
+async function closeDriver(driver) {
   if (driver) {
     try {
       await driver.close();
@@ -91,18 +79,15 @@ async function closeDriver() {
   }
 }
 
-// Initialize the driver and test the connection
-initializeDriver();
-testConnection().catch(error => {
-  console.error('Failed to test Neo4j connection:', error);
-});
+// Initialize the driver
+const driver = initializeDriver();
 
+// Export everything needed
 module.exports = {
-  config,
   driver,
-  isConnected,
-  connectionError,
+  config,
+  dbName: config.database,
+  testConnection,
   executeQuery,
-  closeDriver,
-  testConnection
+  closeDriver
 }; 

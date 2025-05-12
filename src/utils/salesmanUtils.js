@@ -132,21 +132,21 @@ export const getSalesmanAppointmentsByDate = async (salesmanId, date, status = n
 /**
  * Updates a salesman's availability by creating appointments
  * @param {string} salesmanId - ID of the salesman
- * @param {string} date - Date in YYYY-MM-DD format
+ * @param {string} datetime - Date and time in YYYY-MM-DDTHH:MM format
  * @param {Array} timeSlots - Array of time slots (e.g. ["09:00", "10:00"])
  * @returns {Promise<Object>} - Response data
  */
-export const updateSalesmanAvailability = async (salesmanId, date, timeSlots) => {
+export const updateSalesmanAvailability = async (salesmanId, datetime, timeSlots) => {
   try {
-    console.log(`Updating availability for salesman ${salesmanId} on ${date}:`, timeSlots);
-    const response = await axios.post(
-      `${API_BASE_URL}/api/salesmen/${salesmanId}/availability`,
-      { date, timeSlots }
-    );
+    console.log(`Updating availability for salesman ${salesmanId} on ${datetime}:`, timeSlots);
+    const response = await axios.post(`${API_BASE_URL}/api/salesmen/${salesmanId}/availability`, {
+      datetime,
+      timeSlots
+    });
     return response.data;
   } catch (error) {
-    console.error(`Error updating availability for salesman ${salesmanId}:`, error);
-    return { success: false, error: error.message };
+    console.error('Error updating salesman availability:', error);
+    throw error;
   }
 };
 

@@ -14,36 +14,39 @@ const SalesmanDashboard = () => {
   const [activeTab, setActiveTab] = useState('booked');
   const [showAddAppointmentsForm, setShowAddAppointmentsForm] = useState(false);
   const [availabilityData, setAvailabilityData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    salesmanId: '',
+    datetime: new Date().toISOString(),
     timeSlots: []
   });
   const [message, setMessage] = useState({ text: '', type: '' });
+  const [errorDetails, setErrorDetails] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const data = await getSalesmanById(id);
+      if (data) {
+        setSalesman(data);
+        setError(null);
+      } else {
+        setError('Salesman not found');
+      }
+    } catch (err) {
+      console.error('Error fetching salesman:', err);
+      setError('Failed to load salesman data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const timeSlotOptions = [
     '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'
   ];
 
   useEffect(() => {
-    const fetchSalesman = async () => {
-      try {
-        setLoading(true);
-        const data = await getSalesmanById(id);
-        if (data) {
-          setSalesman(data);
-          setError(null);
-        } else {
-          setError('Salesman not found');
-        }
-      } catch (err) {
-        console.error('Error fetching salesman:', err);
-        setError('Failed to load salesman data');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     if (id) {
-      fetchSalesman();
+      fetchData();
     } else {
       setError('No salesman ID provided');
       setLoading(false);
@@ -84,31 +87,36 @@ const SalesmanDashboard = () => {
 
   const handleAvailabilitySubmit = async (e) => {
     e.preventDefault();
+    setError(null);
+    setErrorDetails(null);
     
-    if (availabilityData.timeSlots.length === 0) {
-      setMessage({ text: 'Please select at least one time slot', type: 'error' });
+    if (!availabilityData.salesmanId || !availabilityData.datetime || availabilityData.timeSlots.length === 0) {
+      setError('Please select a salesman, date, and at least one time slot');
       return;
     }
-    
+
     try {
-      setMessage({ text: 'Saving availability...', type: 'info' });
-      const response = await updateSalesmanAvailability(id, availabilityData.date, availabilityData.timeSlots);
+      const response = await updateSalesmanAvailability(
+        availabilityData.salesmanId,
+        availabilityData.datetime,
+        availabilityData.timeSlots
+      );
       
       if (response.success) {
-        setMessage({ text: 'Availability added successfully', type: 'success' });
-        // Reset form after successful submission
+        setSuccessMessage('Availability updated successfully');
         setAvailabilityData({
-          date: new Date().toISOString().split('T')[0],
+          salesmanId: '',
+          datetime: new Date().toISOString(),
           timeSlots: []
         });
-        // Refresh appointments by changing tab
-        setActiveTab('available');
+        fetchData();
       } else {
-        setMessage({ text: response.error || 'Failed to add availability', type: 'error' });
+        setError(response.message || 'Failed to update availability');
+        setErrorDetails(response.details);
       }
-    } catch (error) {
-      console.error('Error setting availability:', error);
-      setMessage({ text: 'An error occurred while setting availability', type: 'error' });
+    } catch (err) {
+      setError('Failed to update availability');
+      setErrorDetails(err.message);
     }
   };
 
@@ -231,11 +239,11 @@ const SalesmanDashboard = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Date *</label>
                 <input
-                  type="date"
-                  name="date"
-                  value={availabilityData.date}
+                  type="datetime-local"
+                  name="datetime"
+                  value={availabilityData.datetime}
                   onChange={handleAvailabilityChange}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                   required
                 />
               </div>

@@ -39,7 +39,7 @@ function Admin() {
   // For availability form
   const [availabilityData, setAvailabilityData] = useState({
     salesmanId: '',
-    date: new Date().toISOString().split('T')[0],
+    datetime: new Date().toISOString(),
     timeSlots: []
   });
   
@@ -63,13 +63,22 @@ function Admin() {
     // First filter by status
     let filtered = [...appointments];
     
-    if (appointmentFilter !== 'any') {
-      filtered = filtered.filter(appointment => appointment.status === appointmentFilter);
-    }
+    // Only show appointments that are booked and have both a salesman and lead
+    filtered = filtered.filter(appointment => 
+      appointment.status === 'booked' && 
+      appointment.salesman && 
+      appointment.lead
+    );
     
-    // Show all appointments, regardless of whether they have a salesman or client
+    // Sort by datetime
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.datetime);
+      const dateB = new Date(b.datetime);
+      return dateA - dateB;
+    });
+    
     setFilteredAppointments(filtered);
-  }, [appointments, appointmentFilter]);
+  }, [appointments]);
 
   // For availability tab to show available appointments
   useEffect(() => {
@@ -155,22 +164,56 @@ function Admin() {
     }
   };
 
-  // Format dates for frontend
-  const formatNeo4jDate = (dateObj) => {
-    if (!dateObj) return 'N/A';
+  const formatDateTime = (datetime) => {
+    if (!datetime) return 'N/A';
     
-    if (typeof dateObj === 'string') {
-      return new Date(dateObj).toLocaleDateString();
+    try {
+      // If datetime is a Neo4j datetime object
+      if (typeof datetime === 'object' && datetime.year) {
+        const dt = datetime;
+        const jsDate = new Date(Date.UTC(
+          dt.year.low || dt.year,
+          (dt.month.low || dt.month) - 1,
+          dt.day.low || dt.day,
+          dt.hour.low || dt.hour,
+          dt.minute.low || dt.minute,
+          dt.second.low || dt.second,
+          (dt.nanosecond.low || dt.nanosecond) / 1000000
+        ));
+        
+        if (!isNaN(jsDate.getTime())) {
+          return jsDate.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          });
+        }
+      }
+      
+      // If datetime is a string
+      const date = new Date(datetime);
+      if (isNaN(date.getTime())) {
+        return 'Invalid Date';
+      }
+      return date.toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (error) {
+      console.error('Error formatting datetime:', error);
+      return 'Invalid Date';
     }
-    
-    if (dateObj.year && dateObj.month && dateObj.day) {
-      const year = dateObj.year.low || dateObj.year;
-      const month = (dateObj.month.low || dateObj.month) - 1;
-      const day = dateObj.day.low || dateObj.day;
-      return new Date(year, month, day).toLocaleDateString();
-    }
-    
-    return 'Invalid Date';
   };
 
   // Extract integer value from Neo4j integer objects
@@ -303,49 +346,52 @@ function Admin() {
   const handleTimeSlotChange = (timeSlot) => {
     setAvailabilityData(prev => {
       const timeSlots = [...prev.timeSlots];
-      if (timeSlots.includes(timeSlot)) {
-        // Remove the time slot if already selected
-        return {
-          ...prev,
-          timeSlots: timeSlots.filter(t => t !== timeSlot)
-        };
+      const index = timeSlots.indexOf(timeSlot);
+      
+      if (index === -1) {
+        timeSlots.push(timeSlot);
       } else {
-        // Add the time slot
-        return {
-          ...prev,
-          timeSlots: [...timeSlots, timeSlot]
-        };
+        timeSlots.splice(index, 1);
       }
+      
+      return {
+        ...prev,
+        timeSlots
+      };
     });
   };
   
   const handleAvailabilitySubmit = async (e) => {
     e.preventDefault();
-    if (!availabilityData.salesmanId || !availabilityData.date || availabilityData.timeSlots.length === 0) {
+    setError(null);
+    setErrorDetails(null);
+    
+    if (!availabilityData.salesmanId || !availabilityData.datetime || availabilityData.timeSlots.length === 0) {
       setError('Please select a salesman, date, and at least one time slot');
       return;
     }
-    
+
     try {
-      await axios.post(
-        `${API_BASE_URL}/api/salesmen/${availabilityData.salesmanId}/availability`,
-        {
-          date: availabilityData.date,
-          timeSlots: availabilityData.timeSlots
-        }
-      );
-      
-      setAvailabilityData({
-        salesmanId: '',
-        date: new Date().toISOString().split('T')[0],
-        timeSlots: []
+      const response = await axios.post(`${API_BASE_URL}/api/salesmen/${availabilityData.salesmanId}/availability`, {
+        datetime: availabilityData.datetime,
+        timeSlots: availabilityData.timeSlots
       });
       
-      fetchData(); // Refresh the data
-      setError(null);
+      if (response.data.success) {
+        setSuccessMessage('Availability updated successfully');
+        setAvailabilityData({
+          salesmanId: '',
+          datetime: new Date().toISOString(),
+          timeSlots: []
+        });
+        fetchData();
+      } else {
+        setError(response.data.message || 'Failed to update availability');
+        setErrorDetails(response.data.details);
+      }
     } catch (err) {
-      console.error('Error updating availability:', err);
-      setError(err.response?.data?.message || 'Failed to update availability');
+      setError('Failed to update availability');
+      setErrorDetails(err.message);
     }
   };
 
@@ -628,29 +674,13 @@ function Admin() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
               <input
-                type="date"
-                name="date"
-                value={editingAppointment.date}
+                type="datetime-local"
+                name="datetime"
+                value={editingAppointment.datetime}
                 onChange={handleAppointmentInputChange}
                 className="w-full p-2 border rounded"
                 required
               />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Time</label>
-              <select
-                name="time"
-                value={editingAppointment.time}
-                onChange={handleAppointmentInputChange}
-                className="w-full p-2 border rounded"
-                required
-              >
-                <option value="">Select a time</option>
-                {timeSlotOptions.map(slot => (
-                  <option key={slot} value={slot}>{slot}</option>
-                ))}
-              </select>
             </div>
             
             <div>
@@ -816,12 +846,11 @@ function Admin() {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Date *</label>
                 <input
-                  type="date"
-                  name="date"
-                  value={availabilityData.date}
+                  type="datetime-local"
+                  name="datetime"
+                  value={availabilityData.datetime}
                   onChange={handleAvailabilityChange}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                 />
               </div>
             </div>
@@ -988,79 +1017,43 @@ function Admin() {
       {activeTab === 'appointments' && (
         <div>
           <h2>Scheduled Appointments</h2>
-          <p className="text-gray-600 mb-3">Showing appointments with both a salesman and client assigned</p>
+          <p className="text-gray-600 mb-3">Showing booked appointments with both a salesman and client assigned</p>
           <div className="flex justify-between mb-4">
-            <div>
-              <select 
-                value={appointmentFilter}
-                onChange={(e) => setAppointmentFilter(e.target.value)}
-                className="border rounded px-3 py-1 text-sm"
-              >
-                <option value="any">All Statuses</option>
-                <option value="booked">Booked</option>
-                <option value="completed">Completed</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
             <div>{filteredAppointments.length} appointments found</div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full bg-white border border-gray-200">
-              <thead>
-                <tr>
-                  <th className="py-2 px-4 border-b">Date</th>
-                  <th className="py-2 px-4 border-b">Time</th>
-                  <th className="py-2 px-4 border-b">Status</th>
-                  <th className="py-2 px-4 border-b">Client</th>
-                  <th className="py-2 px-4 border-b">Client Email</th>
-                  <th className="py-2 px-4 border-b">Client Phone</th>
-                  <th className="py-2 px-4 border-b">Salesman</th>
-                  <th className="py-2 px-4 border-b">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAppointments.map(appointment => (
-                  <tr key={appointment.id}>
-                    <td className="py-2 px-4 border-b">{formatNeo4jDate(appointment.date)}</td>
-                    <td className="py-2 px-4 border-b">{appointment.time}</td>
-                    <td className="py-2 px-4 border-b">
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        appointment.status === 'available' 
-                          ? 'bg-green-100 text-green-800' 
-                          : appointment.status === 'booked'
-                            ? 'bg-blue-100 text-blue-800'
-                            : appointment.status === 'completed'
-                              ? 'bg-purple-100 text-purple-800'
-                              : 'bg-red-100 text-red-800'
-                      }`}>
-                        {appointment.status}
-                      </span>
-                    </td>
-                    <td className="py-2 px-4 border-b">{appointment.lead?.name || 'N/A'}</td>
-                    <td className="py-2 px-4 border-b">{appointment.lead?.email || 'N/A'}</td>
-                    <td className="py-2 px-4 border-b">{appointment.lead?.phone || 'N/A'}</td>
-                    <td className="py-2 px-4 border-b">{appointment.salesman?.name || 'N/A'}</td>
-                    <td className="py-2 px-4 border-b">
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => handleEditAppointment(appointment)}
-                          className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs hover:bg-blue-200"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAppointment(appointment.id)}
-                          className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs hover:bg-red-200"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
+          
+          {filteredAppointments.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Salesman</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Client Name</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredAppointments.map((appointment) => (
+                    <tr key={appointment.id}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {formatDateTime(appointment.datetime)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{appointment.salesman?.name || 'N/A'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{appointment.lead?.name || 'N/A'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{appointment.lead?.email || 'N/A'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{appointment.lead?.phone || 'N/A'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-4 text-gray-500">
+              No scheduled appointments found
+            </div>
+          )}
         </div>
       )}
       
@@ -1156,12 +1149,11 @@ function Admin() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Date *</label>
                   <input
-                    type="date"
-                    name="date"
-                    value={availabilityData.date}
+                    type="datetime-local"
+                    name="datetime"
+                    value={availabilityData.datetime}
                     onChange={handleAvailabilityChange}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    required
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                   />
                 </div>
               </div>
@@ -1231,7 +1223,7 @@ function Admin() {
                     {filteredAvailableAppointments.map(appointment => (
                       <tr key={appointment.id} className="hover:bg-gray-50">
                         <td className="px-3 py-2 whitespace-nowrap text-sm">{appointment.salesman?.name || 'N/A'}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{formatNeo4jDate(appointment.date)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm">{formatDateTime(appointment.datetime)}</td>
                         <td className="px-3 py-2 whitespace-nowrap text-sm">{appointment.time}</td>
                         <td className="px-3 py-2 whitespace-nowrap text-sm">
                           <button

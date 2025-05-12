@@ -9,57 +9,78 @@ const SalesmanAppointments = ({ salesmanId, defaultStatus = "booked" }) => {
   const [statusFilter, setStatusFilter] = useState(defaultStatus);
 
   useEffect(() => {
-    if (!salesmanId) {
-      setAppointments([]);
-      setLoading(false);
-      return;
-    }
-    
-    const fetchAppointments = async () => {
-      try {
-        setLoading(true);
-        console.log(`Fetching appointments for salesman ${salesmanId} with status: ${statusFilter}`);
-        
-        const params = {};
-        if (statusFilter !== "any") {
-          params.status = statusFilter;
-        }
-        
-        const response = await axios.get(`${API_BASE_URL}/api/salesmen/${salesmanId}/appointments`, { params });
-        if (response.data && response.data.success) {
-          console.log(`Found ${response.data.data?.length || 0} appointments`);
-          setAppointments(response.data.data || []);
-        } else {
-          console.error('Unexpected response format:', response.data);
-          setAppointments([]);
-        }
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching appointments:', err);
-        setError('Failed to load appointments');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchAppointments();
   }, [salesmanId, statusFilter]);
 
-  const formatDate = (dateObj) => {
-    if (!dateObj) return 'N/A';
-    
-    if (typeof dateObj === 'string') {
-      return new Date(dateObj).toLocaleDateString();
+  const fetchAppointments = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`/api/salesmen/${salesmanId}/appointments?status=${statusFilter}`);
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch appointments');
+      }
+      
+      setAppointments(data.data || []);
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      setError(error.message);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const formatDateTime = (datetime) => {
+    if (!datetime) return 'N/A';
     
-    if (dateObj.year && dateObj.month && dateObj.day) {
-      const year = dateObj.year.low || dateObj.year;
-      const month = (dateObj.month.low || dateObj.month) - 1;
-      const day = dateObj.day.low || dateObj.day;
-      return new Date(year, month, day).toLocaleDateString();
+    try {
+      // If datetime is a Neo4j datetime object
+      if (typeof datetime === 'object' && datetime.year) {
+        const dt = datetime;
+        const jsDate = new Date(Date.UTC(
+          dt.year.low || dt.year,
+          (dt.month.low || dt.month) - 1,
+          dt.day.low || dt.day,
+          dt.hour.low || dt.hour,
+          dt.minute.low || dt.minute,
+          dt.second.low || dt.second,
+          (dt.nanosecond.low || dt.nanosecond) / 1000000
+        ));
+        
+        if (!isNaN(jsDate.getTime())) {
+          return jsDate.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          });
+        }
+      }
+      
+      // If datetime is a string
+      const date = new Date(datetime);
+      if (isNaN(date.getTime())) {
+        return 'Invalid Date';
+      }
+      return date.toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (error) {
+      console.error('Error formatting datetime:', error);
+      return 'Invalid Date';
     }
-    
-    return 'Invalid Date';
   };
 
   return (
@@ -98,8 +119,7 @@ const SalesmanAppointments = ({ salesmanId, defaultStatus = "booked" }) => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Client</th>
               </tr>
@@ -107,8 +127,7 @@ const SalesmanAppointments = ({ salesmanId, defaultStatus = "booked" }) => {
             <tbody className="bg-white divide-y divide-gray-200">
               {appointments.map((appointment) => (
                 <tr key={appointment.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDate(appointment.date)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{appointment.time}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDateTime(appointment.datetime)}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
                       ${appointment.status === 'available' ? 'bg-green-100 text-green-800' :

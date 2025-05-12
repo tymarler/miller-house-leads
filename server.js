@@ -1,36 +1,16 @@
 const express = require('express');
-const neo4j = require('neo4j-driver');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const app = express();
 require('dotenv').config();
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
-const { driver, config } = require('./src/config/database');
+const { driver, config, testConnection, executeQuery } = require('./src/config/database');
 const leadsData = require('./src/data/leads');
 const appointmentsData = require('./src/data/appointments');
-
-// Database connection tracking
-let isConnected = false;
 const dbName = config.database;
-
-// Test database connection
-async function testConnection() {
-  const session = driver.session({ database: dbName });
-  try {
-    await session.run('RETURN 1');
-    isConnected = true;
-    console.log('Database connection successful');
-  } catch (error) {
-    isConnected = false;
-    console.error('Database connection failed:', error);
-  } finally {
-    await session.close();
-  }
-}
-
-// Call testConnection immediately
-testConnection();
+let isConnected = false;
+let connectionError = null;
 
 // Set port consistently
 const PORT = 3001;
@@ -43,6 +23,72 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
+
+// Initialize storage
+const storage = {
+  leads: [],
+  appointments: []
+};
+
+// Initialize mock data (empty implementations)
+function initializeMockLeads() {
+  console.log('Mock leads initialization skipped by user request');
+  storage.leads = [];
+}
+
+function initializeMockAppointments() {
+  console.log('Mock appointments initialization skipped by user request');
+  storage.appointments = [];
+}
+
+// Initialize the application with better error handling
+async function initializeApp() {
+  try {
+    console.log('Starting application initialization...');
+    const connected = await testConnection(driver);
+    if (!connected) {
+      throw new Error('Failed to connect to Neo4j database');
+    }
+    isConnected = true;
+    console.log('Database connection successful');
+    
+    // Initialize database schema and data
+    console.log('Setting up database schema...');
+    await executeQuery(driver, async (session) => {
+      // Create constraints and indexes for Lead nodes
+      await session.run(`
+        CREATE CONSTRAINT IF NOT EXISTS FOR (l:Lead) REQUIRE l.id IS UNIQUE
+      `);
+      await session.run(`
+        CREATE INDEX IF NOT EXISTS FOR (l:Lead) ON (l.email)
+      `);
+      
+      // Create constraints and indexes for Appointment nodes
+      await session.run(`
+        CREATE CONSTRAINT IF NOT EXISTS FOR (a:Appointment) REQUIRE a.id IS UNIQUE
+      `);
+      await session.run(`
+        CREATE INDEX IF NOT EXISTS FOR (a:Appointment) ON (a.date, a.time)
+      `);
+      await session.run(`
+        CREATE INDEX IF NOT EXISTS FOR (a:Appointment) ON (a.status)
+      `);
+    });
+    console.log('Database initialization complete');
+    
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT} (accessible at http://localhost:${PORT})`);
+    });
+  } catch (error) {
+    console.error('Error during initialization:', error);
+    isConnected = false;
+    connectionError = error;
+    // Initialize mock data as fallback
+    initializeMockLeads();
+    initializeMockAppointments();
+  }
+}
 
 // Serve static files from the build directory
 app.use(express.static(path.join(__dirname, 'build')));
@@ -102,9 +148,110 @@ const sendEmail = async (to, subject, text, html) => {
   }
 };
 
-// Initialize storage (minimal for tracking errors only)
-const storage = {
-  errors: []
+const getEmailTemplate = (leadData, appointmentDetails) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #2c5282;">Thank you for scheduling your consultation!</h2>
+      
+      <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #2d3748;">Your Appointment Details:</h3>
+        <p><strong>Date:</strong> ${appointmentDetails.datetime}</p>
+      </div>
+
+      <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #2d3748;">Pre-Consultation Questionnaire</h3>
+        <p>To help us make the most of our time together, please review and prepare answers to the following questions:</p>
+        
+        <ol style="list-style-type: decimal; padding-left: 20px;">
+          <li>Are you ready to design your new home?</li>
+          <li>Number of vehicle parking spaces: ____</li>
+          <li>Type of space (under roof garage, detached covered, uncovered): ____________</li>
+          <li>Will there be outdoor living space(s)? _______</li>
+          <li>With outdoor kitchen area? _______</li>
+          <li>Number of bedrooms range: ______</li>
+          <li>Number of bathrooms: ______</li>
+          <li>Number of Living Areas: _____</li>
+          <li>Number of levels? ________</li>
+          <li>What is the desired completion date for your new home? ________</li>
+          <li>Are you aware of the permitting requirements for the building (HOA, sanitary sewer, building codes)? ________</li>
+          <li>Do you have a survey of the lot that you are building on? ________</li>
+          <li>Do you have a surface topography of the lot that you are building on? ________</li>
+          <li>Do you have inspirational photos, drawings, articles, online sources etc. that will help with the creation of your home's design? _________</li>
+          <li>Has a general contractor been selected? ________</li>
+          <li>Has general consideration been given to the finish details of the home?</li>
+          <ul>
+            <li>Exterior finish: __________</li>
+            <li>Roof type: ___________</li>
+            <li>Countertop materials: ____________</li>
+            <li>Flooring materials: __________</li>
+          </ul>
+          <li>What space is the most important to you? __________</li>
+          <li>Are there any challenges or concerns that you would like to address? ________</li>
+          <li>Once this worksheet has satisfactorily been completed are you ready to move to the design phase assuming that the terms are agreeable? ______</li>
+        </ol>
+      </div>
+
+      <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #2d3748;">What to Expect</h3>
+        <p>During our consultation, we will:</p>
+        <ul>
+          <li>Review your answers to these questions</li>
+          <li>Discuss your vision for your new home</li>
+          <li>Explore design options and possibilities</li>
+          <li>Address any concerns or questions you may have</li>
+        </ul>
+      </div>
+
+      <p style="color: #718096; font-size: 14px; margin-top: 20px;">
+        If you need to reschedule or have any questions, please contact us at your earliest convenience.
+      </p>
+    </div>
+  `;
+
+  const text = `
+    Thank you for scheduling your consultation!
+
+    Your Appointment Details:
+    Date: ${appointmentDetails.datetime}
+
+    Pre-Consultation Questionnaire:
+    Please review and prepare answers to the following questions:
+
+    1. Are you ready to design your new home?
+    2. Number of vehicle parking spaces: ____
+    3. Type of space (under roof garage, detached covered, uncovered): ____________
+    4. Will there be outdoor living space(s)? _______
+    5. With outdoor kitchen area? _______
+    6. Number of bedrooms range: ______
+    7. Number of bathrooms: ______
+    8. Number of Living Areas: _____
+    9. Number of levels? ________
+    10. What is the desired completion date for your new home? ________
+    11. Are you aware of the permitting requirements for the building (HOA, sanitary sewer, building codes)? ________
+    12. Do you have a survey of the lot that you are building on? ________
+    13. Do you have a surface topography of the lot that you are building on? ________
+    14. Do you have inspirational photos, drawings, articles, online sources etc. that will help with the creation of your home's design? _________
+    15. Has a general contractor been selected? ________
+    16. Has general consideration been given to the finish details of the home?
+      - Exterior finish: __________
+      - Roof type: ___________
+      - Countertop materials: ____________
+      - Flooring materials: __________
+    17. What space is the most important to you? __________
+    18. Are there any challenges or concerns that you would like to address? ________
+    19. Once this worksheet has satisfactorily been completed are you ready to move to the design phase assuming that the terms are agreeable? ______
+
+    What to Expect:
+    During our consultation, we will:
+    - Review your answers to these questions
+    - Discuss your vision for your new home
+    - Explore design options and possibilities
+    - Address any concerns or questions you may have
+
+    If you need to reschedule or have any questions, please contact us at your earliest convenience.
+  `;
+
+  return { html, text };
 };
 
 // Helper function to handle database operations without fallback
@@ -123,78 +270,12 @@ async function executeWithSession(operation) {
   }
 }
 
-// Initialize database schema and constraints
-async function initializeDatabase() {
-  console.log('Setting up database schema...');
-  const session = driver.session({ database: config.database });
-  try {
-    // Create constraints and indexes for Lead nodes
-    await session.run(`
-      CREATE CONSTRAINT IF NOT EXISTS FOR (l:Lead) REQUIRE l.id IS UNIQUE
-    `);
-    await session.run(`
-      CREATE INDEX IF NOT EXISTS FOR (l:Lead) ON (l.email)
-    `);
-    
-    // Create constraints and indexes for Appointment nodes
-    await session.run(`
-      CREATE CONSTRAINT IF NOT EXISTS FOR (a:Appointment) REQUIRE a.id IS UNIQUE
-    `);
-    await session.run(`
-      CREATE INDEX IF NOT EXISTS FOR (a:Appointment) ON (a.datetime)
-    `);
-    await session.run(`
-      CREATE INDEX IF NOT EXISTS FOR (a:Appointment) ON (a.status)
-    `);
-    
-    // Create constraints and indexes for Salesman nodes
-    await session.run(`
-      CREATE CONSTRAINT IF NOT EXISTS FOR (s:Salesman) REQUIRE s.id IS UNIQUE
-    `);
-    await session.run(`
-      CREATE INDEX IF NOT EXISTS FOR (s:Salesman) ON (s.email)
-    `);
-    await session.run(`
-      CREATE INDEX IF NOT EXISTS FOR (s:Salesman) ON (s.priority)
-    `);
-    
-    // Check if we have existing salesmen, if not create some default ones
-    const salesmenResult = await session.run(`
-      MATCH (s:Salesman) RETURN count(s) as count
-    `);
-    
-    const salesmenCount = salesmenResult.records[0].get('count').low || 0;
-    console.log(`Found ${salesmenCount} existing salesmen in database`);
-    
-    if (salesmenCount === 0) {
-      console.log('Creating default salesmen...');
-      // Create default salesmen with different priorities (lower number = higher priority)
-      await session.run(`
-        CREATE (s:Salesman {
-          id: $id1,
-          name: 'John Smith',
-          email: 'john@millerhouse.com',
-          priority: 1,
-          createdAt: datetime()
-        })
-      `, { id1: uuidv4() });
-      
-      console.log('Default salesmen created successfully');
-    }
-  } catch (error) {
-    console.error('Error initializing database:', error);
-    throw error;
-  } finally {
-    await session.close();
-  }
-}
-
 // Initialize appointments in Neo4j
 async function initializeAppointments() {
   if (!isConnected) {
     console.error('Cannot initialize appointments: Database not connected');
-      return;
-    }
+    return;
+  }
     
   const session = driver.session({ database: dbName });
   try {
@@ -218,16 +299,18 @@ async function initializeAppointments() {
         const appointmentId = uuidv4();
         
         // Store datetime in UTC
-      await session.run(`
-          MERGE (a:Appointment {datetime: datetime($datetime)})
-          ON CREATE SET a += {
+        await session.run(`
+          CREATE (a:Appointment {
             id: $id,
+            datetime: datetime($datetime),
             status: 'available',
-          createdAt: datetime()
-          }
+            createdAt: datetime(),
+            timestamp: $timestamp
+          })
         `, {
+          id: appointmentId,
           datetime: appointmentDateTime.toISOString(),
-          id: appointmentId
+          timestamp: appointmentDateTime.getTime()
         });
       }
     }
@@ -374,134 +457,6 @@ async function cleanupSalesmen() {
     await session.close();
   }
 }
-
-// Start the application
-async function initializeApp() {
-  try {
-    console.log('Starting application initialization...');
-    await initializeDatabase();
-    await cleanupSalesmen();
-    await initializeAppointments();
-    await initializeSalesmanAppointments();
-    await cleanupPastAppointments();
-    console.log('Database initialization complete');
-    
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT} (accessible at http://localhost:${PORT})`);
-    });
-  } catch (error) {
-    console.error('Critical error during application startup:', error);
-    process.exit(1);
-  }
-}
-
-initializeApp();
-
-const getEmailTemplate = (leadData, appointmentDetails) => {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #2c5282;">Thank you for scheduling your consultation!</h2>
-      
-      <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <h3 style="color: #2d3748;">Your Appointment Details:</h3>
-        <p><strong>Date:</strong> ${appointmentDetails.datetime}</p>
-      </div>
-
-      <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <h3 style="color: #2d3748;">Pre-Consultation Questionnaire</h3>
-        <p>To help us make the most of our time together, please review and prepare answers to the following questions:</p>
-        
-        <ol style="list-style-type: decimal; padding-left: 20px;">
-          <li>Are you ready to design your new home?</li>
-          <li>Number of vehicle parking spaces: ____</li>
-          <li>Type of space (under roof garage, detached covered, uncovered): ____________</li>
-          <li>Will there be outdoor living space(s)? _______</li>
-          <li>With outdoor kitchen area? _______</li>
-          <li>Number of bedrooms range: ______</li>
-          <li>Number of bathrooms: ______</li>
-          <li>Number of Living Areas: _____</li>
-          <li>Number of levels? ________</li>
-          <li>What is the desired completion date for your new home? ________</li>
-          <li>Are you aware of the permitting requirements for the building (HOA, sanitary sewer, building codes)? ________</li>
-          <li>Do you have a survey of the lot that you are building on? ________</li>
-          <li>Do you have a surface topography of the lot that you are building on? ________</li>
-          <li>Do you have inspirational photos, drawings, articles, online sources etc. that will help with the creation of your home's design? _________</li>
-          <li>Has a general contractor been selected? ________</li>
-          <li>Has general consideration been given to the finish details of the home?</li>
-          <ul>
-            <li>Exterior finish: __________</li>
-            <li>Roof type: ___________</li>
-            <li>Countertop materials: ____________</li>
-            <li>Flooring materials: __________</li>
-          </ul>
-          <li>What space is the most important to you? __________</li>
-          <li>Are there any challenges or concerns that you would like to address? ________</li>
-          <li>Once this worksheet has satisfactorily been completed are you ready to move to the design phase assuming that the terms are agreeable? ______</li>
-        </ol>
-      </div>
-
-      <div style="background-color: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <h3 style="color: #2d3748;">What to Expect</h3>
-        <p>During our consultation, we will:</p>
-        <ul>
-          <li>Review your answers to these questions</li>
-          <li>Discuss your vision for your new home</li>
-          <li>Explore design options and possibilities</li>
-          <li>Address any concerns or questions you may have</li>
-        </ul>
-      </div>
-
-      <p style="color: #718096; font-size: 14px; margin-top: 20px;">
-        If you need to reschedule or have any questions, please contact us at your earliest convenience.
-      </p>
-    </div>
-  `;
-
-  const text = `
-    Thank you for scheduling your consultation!
-
-    Your Appointment Details:
-    Date: ${appointmentDetails.datetime}
-
-    Pre-Consultation Questionnaire:
-    Please review and prepare answers to the following questions:
-
-    1. Are you ready to design your new home?
-    2. Number of vehicle parking spaces: ____
-    3. Type of space (under roof garage, detached covered, uncovered): ____________
-    4. Will there be outdoor living space(s)? _______
-    5. With outdoor kitchen area? _______
-    6. Number of bedrooms range: ______
-    7. Number of bathrooms: ______
-    8. Number of Living Areas: _____
-    9. Number of levels? ________
-    10. What is the desired completion date for your new home? ________
-    11. Are you aware of the permitting requirements for the building (HOA, sanitary sewer, building codes)? ________
-    12. Do you have a survey of the lot that you are building on? ________
-    13. Do you have a surface topography of the lot that you are building on? ________
-    14. Do you have inspirational photos, drawings, articles, online sources etc. that will help with the creation of your home's design? _________
-    15. Has a general contractor been selected? ________
-    16. Has general consideration been given to the finish details of the home?
-       - Exterior finish: __________
-       - Roof type: ___________
-       - Countertop materials: ____________
-       - Flooring materials: __________
-    17. What space is the most important to you? __________
-    18. Are there any challenges or concerns that you would like to address? ________
-    19. Once this worksheet has satisfactorily been completed are you ready to move to the design phase assuming that the terms are agreeable? ______
-
-    What to Expect:
-    During our consultation, we will:
-    - Review your answers to these questions
-    - Discuss your vision for your new home
-    - Explore design options and possibilities
-    - Address any concerns or questions you may have
-
-    If you need to reschedule or have any questions, please contact us at your earliest convenience.
-  `;
-
-  return { html, text };
-};
 
 // API routes go here (after middleware but before the catch-all route)
 
@@ -1239,38 +1194,23 @@ app.post('/api/salesmen/:id/availability', async (req, res) => {
 // API endpoint for getting appointments
 app.get('/api/appointments', async (req, res) => {
   try {
+    const { status } = req.query;
+    
     const session = driver.session({ database: dbName });
     try {
-      const { status } = req.query;
-      const now = new Date();
-      const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-      
-      let query = `
+      const query = `
         MATCH (a:Appointment)
-        WHERE datetime(a.datetime) > datetime($minDateTime)
-        AND datetime(a.datetime) > datetime()
-      `;
-      
-      const params = {
-        minDateTime: twoHoursFromNow.toISOString()
-      };
-      
-      if (status && status !== 'any') {
-        query += ' AND a.status = $status';
-        params.status = status;
-      }
-      
-      query += `
-        OPTIONAL MATCH (s:Salesman)-[:OFFERS_APPOINTMENT]->(a)
         OPTIONAL MATCH (l:Lead)-[:HAS_APPOINTMENT]->(a)
+        OPTIONAL MATCH (s:Salesman)-[:OFFERS_APPOINTMENT]->(a)
+        ${status ? 'WHERE a.status = $status' : ''}
         RETURN a, l, s
         ORDER BY a.datetime
       `;
-
-      const result = await session.run(query, params);
-
+      
+      const result = await session.run(query, status ? { status } : {});
+      
       const appointments = result.records.map(record => {
-        const appointment = record.get('a')?.properties || {};
+        const appointment = record.get('a').properties;
         const lead = record.get('l')?.properties || null;
         const salesman = record.get('s')?.properties || null;
         
@@ -1289,6 +1229,7 @@ app.get('/api/appointments', async (req, res) => {
           
           if (!isNaN(jsDate.getTime())) {
             appointment.datetime = jsDate.toISOString();
+            appointment.timestamp = jsDate.getTime();
           }
         }
         
@@ -1779,4 +1720,6 @@ async function deleteNullDateAppointments() {
     console.error('Error deleting null date appointments:', error);
     throw error;
   }
-} 
+}
+
+initializeApp(); 
